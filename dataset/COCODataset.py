@@ -1,7 +1,7 @@
 import torch
 from torch.utils.data import Dataset
 
-class FLIRDataset(Dataset):
+class COCODataset(Dataset):
     def __init__(self) -> None:
         super().__init__()
 

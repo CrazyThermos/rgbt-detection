@@ -2,7 +2,8 @@ import math
 import torch
 import torch.nn as nn
 from torchvision.transforms import transforms
-from common import C3, Conv, SPPF
+
+from model.common import C3, Conv, SPPF
 
 # YOLOv5 v6.0 backbone
 '''

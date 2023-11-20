@@ -5,7 +5,9 @@ import time
 from collections import defaultdict, deque
 
 import torch
+import torch.nn as nn
 import torch.distributed as dist
+import threading
 
 
 class SmoothedValue:
@@ -280,3 +282,21 @@ def init_distributed_mode(args):
     )
     torch.distributed.barrier()
     setup_for_distributed(args.rank == 0)
+
+
+def is_parallel(model):
+    # Returns True if model is of type DP or DDP
+    return type(model) in (nn.parallel.DataParallel, nn.parallel.DistributedDataParallel)
+
+def de_parallel(model):
+    # De-parallelize a model: returns single-GPU model if model is of type DP or DDP
+    return model.module if is_parallel(model) else model
+
+def threaded(func):
+    # Multi-threads a target function and returns thread. Usage: @threaded decorator
+    def wrapper(*args, **kwargs):
+        thread = threading.Thread(target=func, args=args, kwargs=kwargs, daemon=True)
+        thread.start()
+        return thread
+
+    return wrapper

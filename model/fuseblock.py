@@ -1,6 +1,5 @@
 import torch
 import torch.nn as nn
-from backbone import *
 
 class fuse_block_conv1x1(nn.Module):
     def __init__(self, ch) -> None:
@@ -10,8 +9,6 @@ class fuse_block_conv1x1(nn.Module):
         c = torch.cat((rgb_feature, t_feature), 1)
         out = self.conv1x1(c)
         return out
-        # return rgb_feature + t_feature
-        # return torch.maximum(rgb_feature, t_feature)
 
 class fuse_block_discriminative(nn.Module):
     def __init__(self, ch) -> None:
