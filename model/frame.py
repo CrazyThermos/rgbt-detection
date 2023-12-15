@@ -5,10 +5,11 @@ import torch.nn as nn
 from model.common import Conv, SPPF
 from model.backbone import yolov5_backbone_block
 from model.neck import Yolov5Neck
+from model.head import Yolov5DetectHead
 from model.fuseblock import fuse_block_conv1x1
 
 class layer_fusion_1(nn.Module):
-    def __init__(self, ch, gd=1.0, gw=1.0, last_ch=1024) -> None:
+    def __init__(self, ch, gd=1.0, gw=1.0, last_ch=1024, nc=2) -> None:
         super().__init__()
         self.gd = gd
         self.gw = gw
@@ -31,6 +32,10 @@ class layer_fusion_1(nn.Module):
         self.fuse_block3 = fuse_block_conv1x1(self.gw_div(last_ch//2))
         self.fuse_block4 = fuse_block_conv1x1(self.gw_div(last_ch))
     
+        self.neck_block = Yolov5Neck()
+        self.anchors=[]
+        self.detect_block = Yolov5DetectHead(nc,self.anchors,)
+
     def gw_div(self, x):
         divisor = 8 
         x *= self.gw
@@ -43,19 +48,23 @@ class layer_fusion_1(nn.Module):
         
         rgb_f2 = self.rgb_block2(rgb_f1 + fuse_f1)
         t_f2 = self.t_block2(t_f1 + fuse_f1)
-        out1 = rgb_f2 + t_f2
+        fuse1 = rgb_f2 + t_f2
         fuse_f2 = self.fuse_block2(rgb_f2, t_f2)
         
         rgb_f3 = self.rgb_block3(rgb_f2 + fuse_f2)
         t_f3 = self.t_block3(t_f2 + fuse_f2)
-        out2 = rgb_f3 + t_f3
+        fuse2 = rgb_f3 + t_f3
         fuse_f3 = self.fuse_block3(rgb_f3, t_f3)
         
         rgb_f4 = self.rgb_block4(rgb_f3 + fuse_f3)
         t_f4 = self.t_block4(t_f3 + fuse_f3)
-        out3 = rgb_f4 + t_f4
+        fuse3 = rgb_f4 + t_f4
+        
+        neckout1, neckout2, neckout3 = self.neck_block(fuse1, fuse2, fuse3)
+        res = self.detect_block([neckout1, neckout2, neckout3])
+        return res
 
-        return out1, out2, out3
+
 
 class layer_fusion_2(nn.Module):
     def __init__(self, ch, gd=1.0, gw=1.0) -> None:
@@ -70,13 +79,7 @@ class layer_fusion_2(nn.Module):
         return
 
 
-def create_model():
-    pass
 
-
-def dump_feature_map(layer, prefix, feature):
-    for i in layer:
-        plt.imsave("feature_"+prefix+"_"+str(layer)+"_out.png", feature[i][0].transpose(0,1).sum(1).detach().numpy())
     
 
 

@@ -1,4 +1,4 @@
-from model.fusion import layer_fusion_1
+from model.frame import layer_fusion_1
 from model.neck import Yolov5Neck
 from PIL import Image
 from matplotlib import pyplot as plt
@@ -75,9 +75,9 @@ if __name__ == "__main__":
     # plt.imsave("feature_fuse2.png", output[1])
     # plt.imsave("feature_fuse3.png", output[2])
 
-    neck = Yolov5Neck(1024,gd=0.33,gw=0.5)
-    print(neck)
-    output2 = neck(output[0], output[1], output[2])
-    print(output2[0].shape)
-    print(output2[1].shape)
-    print(output2[2].shape)
+    # neck = Yolov5Neck(1024,gd=0.33,gw=0.5)
+    # print(neck)
+    # output2 = neck(output[0], output[1], output[2])
+    # print(output2[0].shape)
+    # print(output2[1].shape)
+    # print(output2[2].shape)
