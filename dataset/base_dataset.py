@@ -1,16 +1,24 @@
 import os
 import torch
+import torch.nn.functional as F
 import cv2
 import numpy as np
 import random
 import glob
-import tqdm
+import psutil
+import math
+import torch.distributed as dist
+
+from torch.utils.data import DataLoader, Dataset, dataloader, distributed
+from tqdm import tqdm
+from itertools import repeat
 from multiprocessing.pool import Pool, ThreadPool
 from pathlib import Path
-from PIL import Image
-from torch.utils.data import Dataset
-from utils.utils import LOGGER
-class BaseDataset(Dataset):
+from contextlib import contextmanager
+# from utils.utils import LOGGER
+from utils.general import *
+
+class BaseDataloader(Dataset):
     # YOLOv5 train_loader/val_loader, loads images and labels for training and validation
     cache_version = 0.6  # dataset labels *.cache version
     rand_interp_methods = [cv2.INTER_NEAREST, cv2.INTER_LINEAR, cv2.INTER_CUBIC, cv2.INTER_AREA, cv2.INTER_LANCZOS4]
@@ -40,6 +48,8 @@ class BaseDataset(Dataset):
         self.path = path
         # self.albumentations = Albumentations(size=img_size) if augment else None
 
+
+        
         try:
             f = []  # image files
             for p in path if isinstance(path, list) else [path]:
@@ -59,7 +69,7 @@ class BaseDataset(Dataset):
             # self.img_files = sorted([x for x in f if x.suffix[1:].lower() in IMG_FORMATS])  # pathlib
             assert self.im_files, f'{prefix}No images found'
         except Exception as e:
-            raise Exception(f'{prefix}Error loading data from {path}: {e}\n{HELP_URL}') from e
+            raise Exception(f'{prefix}Error loading data from {path}: {e}\n') from e
 
         # Check cache
         self.label_files = img2label_paths(self.im_files)  # labels
@@ -78,13 +88,13 @@ class BaseDataset(Dataset):
             tqdm(None, desc=prefix + d, total=n, initial=n, bar_format=TQDM_BAR_FORMAT)  # display cache results
             if cache['msgs']:
                 LOGGER.info('\n'.join(cache['msgs']))  # display warnings
-        assert nf > 0 or not augment, f'{prefix}No labels found in {cache_path}, can not start training. {HELP_URL}'
+        assert nf > 0 or not augment, f'{prefix}No labels found in {cache_path}, can not start training. '
 
         # Read cache
         [cache.pop(k) for k in ('hash', 'version', 'msgs')]  # remove items
         labels, shapes, self.segments = zip(*cache.values())
         nl = len(np.concatenate(labels, 0))  # number of labels
-        assert nl > 0 or not augment, f'{prefix}All labels empty in {cache_path}, can not start training. {HELP_URL}'
+        assert nl > 0 or not augment, f'{prefix}All labels empty in {cache_path}, can not start training. '
         self.labels = list(labels)
         self.shapes = np.array(shapes)
         self.im_files = list(cache.keys())  # update
@@ -207,7 +217,7 @@ class BaseDataset(Dataset):
         if msgs:
             LOGGER.info('\n'.join(msgs))
         if nf == 0:
-            LOGGER.warning(f'{prefix}WARNING ⚠️ No labels found in {path}. {HELP_URL}')
+            LOGGER.warning(f'{prefix}WARNING ⚠️ No labels found in {path}. ')
         x['hash'] = get_hash(self.label_files + self.im_files)
         x['results'] = nf, nm, ne, nc, len(self.im_files)
         x['msgs'] = msgs  # warnings
@@ -495,6 +505,116 @@ class BaseDataset(Dataset):
 
         return torch.stack(im4, 0), torch.cat(label4, 0), path4, shapes4
 
-    
+class _RepeatSampler:
+    """ Sampler that repeats forever
+
+    Args:
+        sampler (Sampler)
+    """
+
+    def __init__(self, sampler):
+        self.sampler = sampler
+
+    def __iter__(self):
+        while True:
+            yield from iter(self.sampler)
+class InfiniteDataLoader(dataloader.DataLoader):
+    """ Dataloader that reuses workers
+
+    Uses same syntax as vanilla DataLoader
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        object.__setattr__(self, 'batch_sampler', _RepeatSampler(self.batch_sampler))
+        self.iterator = super().__iter__()
+
+    def __len__(self):
+        return len(self.batch_sampler.sampler)
+
+    def __iter__(self):
+        for _ in range(len(self)):
+            yield next(self.iterator)
+
+@contextmanager
+def torch_distributed_zero_first(local_rank: int):
+    # Decorator to make all processes in distributed training wait for each local_master to do something
+    if local_rank not in [-1, 0]:
+        dist.barrier(device_ids=[local_rank])
+    yield
+    if local_rank == 0:
+        dist.barrier(device_ids=[0])
+
+def create_dataloader(path,
+                      imgsz,
+                      batch_size,
+                      stride,
+                      single_cls=False,
+                      hyp=None,
+                      augment=False,
+                      cache=False,
+                      pad=0.0,
+                      rect=False,
+                      rank=-1,
+                      workers=8,
+                      image_weights=False,
+                      quad=False,
+                      prefix='',
+                      shuffle=False,
+                      seed=0):
+    if rect and shuffle:
+        LOGGER.warning('WARNING ⚠️ --rect is incompatible with DataLoader shuffle, setting shuffle=False')
+        shuffle = False
+    with torch_distributed_zero_first(rank):  # init dataset *.cache only once if DDP
+        dataset = BaseDataloader(
+            path,
+            imgsz,
+            batch_size,
+            augment=augment,  # augmentation
+            hyp=hyp,  # hyperparameters
+            rect=rect,  # rectangular batches
+            cache_images=cache,
+            single_cls=single_cls,
+            stride=int(stride),
+            pad=pad,
+            image_weights=image_weights,
+            prefix=prefix)
+
+    batch_size = min(batch_size, len(dataset))
+    nd = torch.cuda.device_count()  # number of CUDA devices
+    nw = min([os.cpu_count() // max(nd, 1), batch_size if batch_size > 1 else 0, workers])  # number of workers
+    sampler = None if rank == -1 else distributed.DistributedSampler(dataset, shuffle=shuffle)
+    loader = DataLoader if image_weights else InfiniteDataLoader  # only DataLoader allows for attribute updates
+    generator = torch.Generator()
+    generator.manual_seed(6148914691236517205 + seed + RANK)
+    return loader(dataset,
+                  batch_size=batch_size,
+                  shuffle=shuffle and sampler is None,
+                  num_workers=nw,
+                  sampler=sampler,
+                  pin_memory=PIN_MEMORY,
+                  collate_fn=BaseDataloader.collate_fn4 if quad else BaseDataloader.collate_fn,
+                  worker_init_fn=seed_worker,
+                  generator=generator), dataset
 
 
+
+# if __name__ == '__main__':
+#     hyp = "multimodal-object-detection/RGBT-Detection/configs/hyp.scaratch-low.yaml"
+#     ndataloader, ndataset = create_dataloader(train_path="../datasets/TEST",
+#                                             imgsz=640,
+#                                             batch_size=1,
+#                                             gs=32,
+#                                             single_cls=False,
+#                                             hyp=hyp,
+#                                             augment=True,
+#                                             cache=None,
+#                                             rect=False,
+#                                             rank=LOCAL_RANK,
+#                                             workers=8,
+#                                             image_weights=False,
+#                                             quad=False,
+#                                             prefix='train:',
+#                                             shuffle=True,
+#                                             seed=0)
+#     pass

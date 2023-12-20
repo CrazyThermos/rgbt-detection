@@ -18,23 +18,23 @@ class layer_fusion_1(nn.Module):
         self.rgb_block2 = yolov5_backbone_block(last_ch//8, last_ch//4, n=6, gd=gd, gw=gw)
         self.rgb_block3 = yolov5_backbone_block(last_ch//4, last_ch//2, n=9, gd=gd, gw=gw)
         self.rgb_block4 = yolov5_backbone_block(last_ch//2, last_ch, n=3, gd=gd, gw=gw)
-        # self.rgb_sppf   = SPPF(self.gw_div(last_ch), self.gw_div(last_ch), 5)
+        self.rgb_sppf   = SPPF(self.gw_div(last_ch), self.gw_div(last_ch), 5)
 
         self.t_conv_1 = Conv(ch, self.gw_div(last_ch//16), 6, 2, 2)
         self.t_block1 = yolov5_backbone_block(last_ch//16, last_ch//8, n=3, gd=gd, gw=gw)
         self.t_block2 = yolov5_backbone_block(last_ch//8, last_ch//4, n=6, gd=gd, gw=gw)
         self.t_block3 = yolov5_backbone_block(last_ch//4, last_ch//2, n=9, gd=gd, gw=gw)
         self.t_block4 = yolov5_backbone_block(last_ch//2, last_ch, n=3, gd=gd, gw=gw)
-        # self.t_sppf   = SPPF(self.gw_div(1024), self.gw_div(1024), 5)
+        self.t_sppf   = SPPF(self.gw_div(1024), self.gw_div(1024), 5)
 
         self.fuse_block1 = fuse_block_conv1x1(self.gw_div(last_ch//8))
         self.fuse_block2 = fuse_block_conv1x1(self.gw_div(last_ch//4))
         self.fuse_block3 = fuse_block_conv1x1(self.gw_div(last_ch//2))
         self.fuse_block4 = fuse_block_conv1x1(self.gw_div(last_ch))
     
-        self.neck_block = Yolov5Neck()
-        self.anchors=[]
-        self.detect_block = Yolov5DetectHead(nc,self.anchors,)
+        self.neck_block = Yolov5Neck(last_ch, n=3, gd=self.gd, gw=self.gw, last_ch=last_ch)
+        self.anchors=[[10,13, 16,30, 33,23], [30,61, 62,45, 59,119], [116,90, 156,198, 373,326]]
+        self.detect_block = Yolov5DetectHead(nc,self.anchors,ch=[last_ch//8, last_ch//4, last_ch//2],training=False)
 
     def gw_div(self, x):
         divisor = 8 
@@ -58,6 +58,8 @@ class layer_fusion_1(nn.Module):
         
         rgb_f4 = self.rgb_block4(rgb_f3 + fuse_f3)
         t_f4 = self.t_block4(t_f3 + fuse_f3)
+        rgb_f4 = self.rgb_sppf(rgb_f4)
+        t_f4 = self.t_sppf(t_f4)
         fuse3 = rgb_f4 + t_f4
         
         neckout1, neckout2, neckout3 = self.neck_block(fuse1, fuse2, fuse3)

@@ -71,6 +71,14 @@ if __name__ == "__main__":
 
     fusion = layer_fusion_1(3,gd=0.33,gw=0.5)
     output = fusion(rgb, t)#[0].transpose(0,1).sum(1).detach().numpy()
+    print(output[0][0][0][0])
+    print(output[0][0][0][1])
+    print(output[0][0][0][2])
+    print(output[0][0][0][3])
+    print(output[0][0][0][4])
+    print(output[0][0][0][5])
+    print(output[0][0][0][6])
+
     # plt.imsave("feature_fuse1.png", output[0])
     # plt.imsave("feature_fuse2.png", output[1])
     # plt.imsave("feature_fuse3.png", output[2])

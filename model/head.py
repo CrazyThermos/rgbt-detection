@@ -8,7 +8,7 @@ class Yolov5DetectHead(nn.Module):
     dynamic = False  # force grid reconstruction
     export = False  # export mode
 
-    def __init__(self, nc=80, anchors=(), ch=(), inplace=True):  # detection layer
+    def __init__(self, nc=80, anchors=(), ch=(), inplace=True, training=True):  # detection layer
         super().__init__()
         self.nc = nc  # number of classes
         self.no = nc + 5  # number of outputs per anchor
@@ -19,7 +19,9 @@ class Yolov5DetectHead(nn.Module):
         self.register_buffer('anchors', torch.tensor(anchors).float().view(self.nl, -1, 2))  # shape(nl,na,2)
         self.m = nn.ModuleList(nn.Conv2d(x, self.no * self.na, 1) for x in ch)  # output conv
         self.inplace = inplace  # use inplace ops (e.g. slice assignment)
-
+        self.training = training
+        self.stride=[8, 16, 32]
+        
     def forward(self, x):
         z = []  # inference output
         for i in range(self.nl):
