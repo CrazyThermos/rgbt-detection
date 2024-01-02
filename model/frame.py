@@ -34,7 +34,7 @@ class layer_fusion_1(nn.Module):
     
         self.neck_block = Yolov5Neck(last_ch, n=3, gd=self.gd, gw=self.gw, last_ch=last_ch)
         self.anchors=[[10,13, 16,30, 33,23], [30,61, 62,45, 59,119], [116,90, 156,198, 373,326]]
-        self.detect_block = Yolov5DetectHead(nc,self.anchors,ch=[last_ch//8, last_ch//4, last_ch//2],training=False)
+        self.detect_block = Yolov5DetectHead(nc,self.anchors,ch=[int(last_ch/4*self.gw), int(last_ch/2*self.gw), int(last_ch*self.gw)],training=False)
 
     def gw_div(self, x):
         divisor = 8 

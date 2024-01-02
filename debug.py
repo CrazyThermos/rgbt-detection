@@ -4,6 +4,12 @@ from PIL import Image
 from matplotlib import pyplot as plt
 from torchvision.transforms import transforms
 from torchvision.models.feature_extraction import get_graph_node_names, create_feature_extractor
+import torch
+import yaml
+import pandas as pd
+import matplotlib
+from dataset.rgbt_dataset import create_rgbtdataloader
+from utils.general import LOCAL_RANK
 
 def create_model():
     pass
@@ -69,15 +75,15 @@ if __name__ == "__main__":
     # plt.imsave("feature_t1024.png", feature_t1024[layer[4]][0].transpose(0,1).sum(1).detach().numpy())
 
 
-    fusion = layer_fusion_1(3,gd=0.33,gw=0.5)
-    output = fusion(rgb, t)#[0].transpose(0,1).sum(1).detach().numpy()
-    print(output[0][0][0][0])
-    print(output[0][0][0][1])
-    print(output[0][0][0][2])
-    print(output[0][0][0][3])
-    print(output[0][0][0][4])
-    print(output[0][0][0][5])
-    print(output[0][0][0][6])
+    # fusion = layer_fusion_1(3)
+    # output = fusion(rgb, t)#[0].transpose(0,1).sum(1).detach().numpy()
+    # print(output[0][0][0][0])
+    # print(output[0][0][0][1])
+    # print(output[0][0][0][2])
+    # print(output[0][0][0][3])
+    # print(output[0][0][0][4])
+    # print(output[0][0][0][5])
+    # print(output[0][0][0][6])
 
     # plt.imsave("feature_fuse1.png", output[0])
     # plt.imsave("feature_fuse2.png", output[1])
@@ -89,3 +95,60 @@ if __name__ == "__main__":
     # print(output2[0].shape)
     # print(output2[1].shape)
     # print(output2[2].shape)
+
+
+
+    # hyp = "configs/hyp.scaratch-low.yaml"
+    # with open(hyp, errors='ignore') as f:
+    #     hyp = yaml.safe_load(f)  # load hyps dict
+    #     if 'anchors' not in hyp:  # anchors commented in hyp.yaml
+    #         hyp['anchors'] = 3
+    # ndataloader, ndataset = create_rgbtdataloader(path="../../datasets/TEST",
+    #                                         imgsz=640,
+    #                                         batch_size=1,
+    #                                         stride=32,
+    #                                         single_cls=False,
+    #                                         hyp=hyp,
+    #                                         augment=False,
+    #                                         cache="ram",
+    #                                         rect=False,
+    #                                         rank=LOCAL_RANK,
+    #                                         workers=8,
+    #                                         image_weights=False,
+    #                                         quad=False,
+    #                                         prefix='train:',
+    #                                         shuffle=True,
+    #                                         seed=0)
+    # pbar = enumerate(ndataloader)
+    # for i, (img_rgb, img_t, targets, paths, _) in pbar:  
+    #     print(img_rgb)
+    #     print(img_t)
+    #     pass
+
+    '''
+    debug train_loader
+    '''
+    import tqdm
+    train_loader, dataset = create_rgbtdataloader('/home/zhengyuhang/datasets/TEST',
+                                            640,
+                                            2,
+                                            stride=32,
+                                            single_cls=False,
+                                            hyp='/home/zhengyuhang/multimodal-object-detection/RGBT-Detection/configs/hyp.scratch-low.yaml',
+                                            augment=False,
+                                            cache=False,
+                                            rect=False,
+                                            rank=LOCAL_RANK,
+                                            workers=8,
+                                            image_weights=False,
+                                            quad=False,
+                                            prefix='',
+                                            shuffle=True,
+                                            seed=0)
+    # train_loader.sampler.set_epoch(4)
+    pbar = enumerate(train_loader)
+    # pbar = tqdm(pbar) 
+    for i, (img_rgb, img_t, targets, rgb_paths,t_paths, _) in pbar:
+        print(rgb_paths)
+        print(t_paths)
+        print(targets)
