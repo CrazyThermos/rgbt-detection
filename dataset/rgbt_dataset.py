@@ -62,19 +62,23 @@ class RGBTDataloader(Dataset):
                         # f += [p.parent / x.lstrip(os.sep) for x in t]  # to global path (pathlib)
                 else:
                     raise FileNotFoundError(f'{prefix}{p} does not exist')
-            self.im_files = sorted(x.replace('/', os.sep) for x in f if x.split('.')[-1].lower() in IMG_FORMATS)
-            # self.img_files = sorted([x for x in f if x.suffix[1:].lower() in IMG_FORMATS])  # pathlib
-            assert self.im_files, f'{prefix}No images found'
+            self.rgb_files = sorted(x.replace('/', os.sep) for x in f if '_rgb' in x.split('.')[0]) # x.split('.')[-1].lower() in IMG_FORMATS
+            self.t_files = sorted(x.replace('/', os.sep) for x in f if '_t' in x.split('.')[0]) # x.split('.')[-1].lower() in IMG_FORMATS
+            
+            # self.im_files = sorted([x for x in f if x.suffix[1:].lower() in IMG_FORMATS])  # pathlib
+            assert self.rgb_files, f'{prefix}No rgb images found'
+            assert self.rgb_files, f'{prefix}No t images found'
+
         except Exception as e:
             raise Exception(f'{prefix}Error loading data from {path}: {e}\n') from e
 
         # Check cache
-        self.label_files = img2label_paths(self.im_files)  # labels
+        self.label_files = img2label_paths(self.t_files)  # labels
         cache_path = (p if p.is_file() else Path(self.label_files[0]).parent).with_suffix('.cache')
         try:
             cache, exists = np.load(cache_path, allow_pickle=True).item(), True  # load dict
             assert cache['version'] == self.cache_version  # matches current version
-            assert cache['hash'] == get_hash(self.label_files + self.im_files)  # identical hash
+            assert cache['hash'] == get_hash(self.label_files + self.rgb_files + self.t_files)  # identical hash
         except Exception:
             cache, exists = self.cache_labels(cache_path, prefix), False  # run cache ops
 
@@ -94,14 +98,16 @@ class RGBTDataloader(Dataset):
         assert nl > 0 or not augment, f'{prefix}All labels empty in {cache_path}, can not start training. '
         self.labels = list(labels)
         self.shapes = np.array(shapes)
-        self.im_files = list(cache.keys())  # update
+        self.rgb_files = [x for x in cache.keys() if '_rgb' in x]  # update
+        self.t_files = [x for x in cache.keys() if '_t' in x]
         self.label_files = img2label_paths(cache.keys())  # update
 
         # Filter images
         if min_items:
             include = np.array([len(x) >= min_items for x in self.labels]).nonzero()[0].astype(int)
             LOGGER.info(f'{prefix}{n - len(include)}/{n} images filtered from dataset')
-            self.im_files = [self.im_files[i] for i in include]
+            self.rgb_files = [self.rgb_files[i] for i in include]
+            self.t_files = [self.t_files[i] for i in include]     
             self.label_files = [self.label_files[i] for i in include]
             self.labels = [self.labels[i] for i in include]
             self.segments = [self.segments[i] for i in include]
@@ -133,7 +139,8 @@ class RGBTDataloader(Dataset):
             s = self.shapes  # wh
             ar = s[:, 1] / s[:, 0]  # aspect ratio
             irect = ar.argsort()
-            self.im_files = [self.im_files[i] for i in irect]
+            self.rgb_files = [self.rgb_files[i] for i in irect]
+            self.t_files = [self.t_files[i] for i in irect]
             self.label_files = [self.label_files[i] for i in irect]
             self.labels = [self.labels[i] for i in irect]
             self.segments = [self.segments[i] for i in irect]
@@ -156,7 +163,7 @@ class RGBTDataloader(Dataset):
         if cache_images == 'ram' and not self.check_cache_ram(prefix=prefix):
             cache_images = False
         self.ims = [None] * n
-        self.npy_files = [Path(f).with_suffix('.npy') for f in self.im_files]
+        self.npy_files = [Path(f).with_suffix('.npy') for f in self.rgb_files] + [Path(f).with_suffix('.npy') for f in self.t_files]
         if cache_images:
             b, gb = 0, 1 << 30  # bytes of cached images, bytes per gigabytes
             self.im_hw0, self.im_hw = [None] * n, [None] * n
@@ -177,7 +184,7 @@ class RGBTDataloader(Dataset):
         b, gb = 0, 1 << 30  # bytes of cached images, bytes per gigabytes
         n = min(self.n, 30)  # extrapolate from 30 random images
         for _ in range(n):
-            im = cv2.imread(random.choice(self.im_files))  # sample image
+            im = cv2.imread(random.choice(self.t_files))  # sample image
             ratio = self.img_size / max(im.shape[0], im.shape[1])  # max(h, w)  # ratio
             b += im.nbytes * ratio ** 2
         mem_required = b * self.n / n  # GB required to cache dataset into RAM
@@ -195,28 +202,46 @@ class RGBTDataloader(Dataset):
         nm, nf, ne, nc, msgs = 0, 0, 0, 0, []  # number missing, found, empty, corrupt, messages
         desc = f'{prefix}Scanning {path.parent / path.stem}...'
         with Pool(NUM_THREADS) as pool:
-            pbar = tqdm(pool.imap(verify_image_label, zip(self.im_files, self.label_files, repeat(prefix))),
+            rgb_pbar = tqdm(pool.imap(verify_image_label, zip(self.rgb_files, self.label_files, repeat(prefix))),
                         desc=desc,
-                        total=len(self.im_files),
+                        total=len(self.t_files),
                         bar_format=TQDM_BAR_FORMAT)
-            for im_file, lb, shape, segments, nm_f, nf_f, ne_f, nc_f, msg in pbar:
+            for rgb_file, lb, shape, segments, nm_f, nf_f, ne_f, nc_f, msg in rgb_pbar:
                 nm += nm_f
                 nf += nf_f
                 ne += ne_f
                 nc += nc_f
-                if im_file:
-                    x[im_file] = [lb, shape, segments]
+                if rgb_file:
+                    x[rgb_file] = [lb, shape, segments]
                 if msg:
                     msgs.append(msg)
-                pbar.desc = f'{desc} {nf} images, {nm + ne} backgrounds, {nc} corrupt'
+                rgb_pbar.desc = f'{desc} {nf} rgb images, {nm + ne} backgrounds, {nc} corrupt'
+        rgb_pbar.close()
 
-        pbar.close()
+        nm, nf, ne, nc, msgs = 0, 0, 0, 0, []  # number missing, found, empty, corrupt, messages
+        with Pool(NUM_THREADS) as pool:
+            t_pbar = tqdm(pool.imap(verify_image_label, zip(self.t_files, self.label_files, repeat(prefix))),
+                        desc=desc,
+                        total=len(self.t_files),
+                        bar_format=TQDM_BAR_FORMAT)
+            for t_file, lb, shape, segments, nm_f, nf_f, ne_f, nc_f, msg in t_pbar:
+                nm += nm_f
+                nf += nf_f
+                ne += ne_f
+                nc += nc_f
+                if t_file:
+                    x[t_file] = [lb, shape, segments]
+                if msg:
+                    msgs.append(msg)
+                t_pbar.desc = f'{desc} {nf} t images, {nm + ne} backgrounds, {nc} corrupt'
+        t_pbar.close()
+
         if msgs:
             LOGGER.info('\n'.join(msgs))
         if nf == 0:
             LOGGER.warning(f'{prefix}WARNING ⚠️ No labels found in {path}. ')
-        x['hash'] = get_hash(self.label_files + self.im_files)
-        x['results'] = nf, nm, ne, nc, len(self.im_files)
+        x['hash'] = get_hash(self.label_files + self.rgb_files + self.t_files)
+        x['results'] = nf, nm, ne, nc, len(self.t_files)
         x['msgs'] = msgs  # warnings
         x['version'] = self.cache_version  # cache version
         try:
@@ -228,13 +253,13 @@ class RGBTDataloader(Dataset):
         return x
 
     def __len__(self):
-        return len(self.im_files)//2
+        return len(self.t_files)
 
-    def __iter__(self):
-        self.count = -1
-        print('ran dataset iter')
-        #self.shuffled_vector = np.random.permutation(self.nF) if self.augment else np.arange(self.nF)
-        return self
+    # def __iter__(self):
+    #     self.count = -1
+    #     print('ran dataset iter')
+    #     #self.shuffled_vector = np.random.permutation(self.nF) if self.augment else np.arange(self.nF)
+    #     return self
 
     def __getitem__(self, index):
         index = self.indices[index]  # linear, shuffled, or image_weights
@@ -252,8 +277,8 @@ class RGBTDataloader(Dataset):
 
         else:
             # Load image
-            img_rgb, _, _ = self.load_image(2*index)
-            img_t, (h0, w0), (h, w) = self.load_image(2*index+1)
+            img_rgb, _, _ = self.load_image(index, imtype='rgb')
+            img_t, (h0, w0), (h, w) = self.load_image(index, imtype='t')
 
 
             # Letterbox
@@ -315,11 +340,17 @@ class RGBTDataloader(Dataset):
         img_t = img_t.transpose((2, 0, 1))[::-1]  # HWC to CHW, BGR to RGB
         img_t = np.ascontiguousarray(img_t)
 
-        return torch.from_numpy(img_rgb), torch.from_numpy(img_t), labels_out, self.im_files[2*index],self.im_files[2*index+1], shapes
+        return torch.from_numpy(img_rgb), torch.from_numpy(img_t), labels_out, self.rgb_files[index],self.t_files[index], shapes
 
-    def load_image(self, i):
+    def load_image(self, i, imtype='t'):
         # Loads 1 image from dataset index 'i', returns (im, original hw, resized hw)
-        im, f, fn = self.ims[i], self.im_files[i], self.npy_files[i],
+        if imtype == 't': 
+            im, f, fn = self.ims[i], self.t_files[i], self.npy_files[i],
+        elif imtype == 'rgb':
+            im, f, fn = self.ims[i], self.rgb_files[i], self.npy_files[i],
+        else :
+            raise Exception(f'imtype only can be rgb/t!\n') 
+        
         if im is None:  # not cached in RAM
             if fn.exists():  # load npy
                 im = np.load(fn)
@@ -338,7 +369,9 @@ class RGBTDataloader(Dataset):
         # Saves an image as an *.npy file for faster loading
         f = self.npy_files[i]
         if not f.exists():
-            np.save(f.as_posix(), cv2.imread(self.im_files[i]))
+            np.save(f.as_posix(), cv2.imread(self.rgb_files[i]))
+            np.save(f.as_posix(), cv2.imread(self.t_files[i]))
+
 
     def load_mosaic(self, index):
         # YOLOv5 4-mosaic loader. Loads 1 image + 3 random images into a 4-image mosaic

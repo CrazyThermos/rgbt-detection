@@ -129,7 +129,7 @@ if __name__ == "__main__":
     debug train_loader
     '''
     import tqdm
-    train_loader, dataset = create_rgbtdataloader('/home/zhengyuhang/datasets/TEST',
+    train_loader, dataset = create_rgbtdataloader('/home/zhengyuhang/datasets/TEST/images/train',
                                             640,
                                             2,
                                             stride=32,
@@ -142,7 +142,7 @@ if __name__ == "__main__":
                                             workers=8,
                                             image_weights=False,
                                             quad=False,
-                                            prefix='',
+                                            prefix='train: ',
                                             shuffle=True,
                                             seed=0)
     # train_loader.sampler.set_epoch(4)
