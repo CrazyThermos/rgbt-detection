@@ -195,7 +195,7 @@ def run(
     jdict, stats, ap, ap_class = [], [], [], []
     callbacks.run('on_val_start')
     pbar = tqdm(dataloader, desc=s, bar_format=TQDM_BAR_FORMAT)  # progress bar
-    for batch_i, (im_rgb, im_t, targets, paths, shapes) in enumerate(pbar):
+    for batch_i, (im_rgb, im_t, targets, rgb_paths, t_paths, shapes) in enumerate(pbar):
         callbacks.run('on_val_batch_start')
         # with dt[0]:
         if cuda:
@@ -236,7 +236,7 @@ def run(
         for si, pred in enumerate(preds):
             labels = targets[targets[:, 0] == si, 1:]
             nl, npr = labels.shape[0], pred.shape[0]  # number of labels, predictions
-            path, shape = Path(paths[si]), shapes[si][0]
+            path, shape = Path(t_paths[si]), shapes[si][0]
             correct = torch.zeros(npr, niou, dtype=torch.bool, device=device)  # init
             seen += 1
 
@@ -275,7 +275,7 @@ def run(
         #     plot_images(im, targets, paths, save_dir / f'val_batch{batch_i}_labels.jpg', names)  # labels
         #     plot_images(im, output_to_target(preds), paths, save_dir / f'val_batch{batch_i}_pred.jpg', names)  # pred
 
-        callbacks.run('on_val_batch_end', batch_i, im_t, targets, paths, shapes, preds)
+        callbacks.run('on_val_batch_end', batch_i, im_t, targets, t_paths, shapes, preds)
 
     # Compute metrics
     stats = [torch.cat(x, 0).cpu().numpy() for x in zip(*stats)]  # to numpy

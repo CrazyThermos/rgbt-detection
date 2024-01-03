@@ -114,7 +114,7 @@ class RGBTDataloader(Dataset):
             self.shapes = self.shapes[include]  # wh
 
         # Create indices
-        n = len(self.shapes)  # number of images
+        n = len(self.shapes)//2  # number of images
         bi = np.floor(np.arange(n) / batch_size).astype(int)  # batch index
         nb = bi[-1] + 1  # number of batches
         self.batch = bi  # batch index of image
@@ -136,7 +136,7 @@ class RGBTDataloader(Dataset):
         # Rectangular Training
         if self.rect:
             # Sort by aspect ratio
-            s = self.shapes  # wh
+            s = self.shapes[0:n]  # wh
             ar = s[:, 1] / s[:, 0]  # aspect ratio
             irect = ar.argsort()
             self.rgb_files = [self.rgb_files[i] for i in irect]
