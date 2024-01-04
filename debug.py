@@ -129,15 +129,15 @@ if __name__ == "__main__":
     debug train_loader
     '''
     import tqdm
-    train_loader, dataset = create_rgbtdataloader('/home/zhengyuhang/datasets/TEST/images/train',
+    train_loader, dataset = create_rgbtdataloader('/home/zhengyuhang/datasets/LLVIP_yolo/images/train',
                                             640,
-                                            2,
+                                            4,
                                             stride=32,
                                             single_cls=False,
                                             hyp='/home/zhengyuhang/multimodal-object-detection/RGBT-Detection/configs/hyp.scratch-low.yaml',
                                             augment=False,
                                             cache=False,
-                                            rect=False,
+                                            rect=True,
                                             rank=LOCAL_RANK,
                                             workers=8,
                                             image_weights=False,

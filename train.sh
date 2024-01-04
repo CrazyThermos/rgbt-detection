@@ -1,1 +1,1 @@
-python train.py --data dataset/llvip.yaml --weights '' --batch-size 4 --epochs 20 --img 640 --name rgbt --device 0
+python train.py --data dataset/test.yaml --weights '' --batch-size 4 --epochs 20 --img 640 --name rgbt --device 0

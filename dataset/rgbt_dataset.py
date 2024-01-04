@@ -100,7 +100,7 @@ class RGBTDataloader(Dataset):
         self.shapes = np.array(shapes)
         self.rgb_files = [x for x in cache.keys() if '_rgb' in x]  # update
         self.t_files = [x for x in cache.keys() if '_t' in x]
-        self.label_files = img2label_paths(cache.keys())  # update
+        self.label_files = img2label_paths([x for x in cache.keys() if '_t' in x])  # update
 
         # Filter images
         if min_items:

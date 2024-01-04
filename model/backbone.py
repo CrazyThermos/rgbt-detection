@@ -40,6 +40,21 @@ class yolov5_backbone(nn.Module):
                                     self.conv_3, self.c3_2, self.conv_4,
                                     self.c3_3, self.conv_5, self.c3_4, 
                                     self.sppf)
+        for block in self.net:
+            if type(block) == Conv:
+                nn.init.kaiming_normal_(block.conv)
+            elif type(block) == C3:
+                nn.init.kaiming_normal_(block.cv1.conv)
+                nn.init.kaiming_normal_(block.cv2.conv)
+                nn.init.kaiming_normal_(block.cv3.conv)
+                for layer in block.m:
+                    nn.init.kaiming_normal_(layer.cv1.conv)
+                    nn.init.kaiming_normal_(layer.cv2.conv)
+            elif type(block) == SPPF:
+                nn.init.kaiming_normal_(block.cv1.conv)
+                nn.init.kaiming_normal_(block.cv2.conv)
+
+
     def gd_muti(self, n):
         gd = self.gd
         return max(round(n * gd), 1) if n > 1 else n
