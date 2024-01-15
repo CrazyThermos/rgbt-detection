@@ -1,1 +1,1 @@
-python train.py --data dataset/test.yaml --weights '' --batch-size 4 --epochs 20 --img 640 --name rgbt --device 0
+python train.py --data dataset/llvip.yaml --weights '' --hyp configs/hyp.scratch-low.yaml --optimizer SGD --batch-size 8 --epochs 300 --img 1280 --name rgbt --device 0

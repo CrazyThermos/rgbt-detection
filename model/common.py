@@ -283,10 +283,16 @@ class Concat(nn.Module):
         return torch.cat(x, self.d)
 
 from pathlib import Path
-from utils.general import yaml_load
+from utils.general import yaml_load, intersect_dicts
 import numpy as np
+def attempt_load(model, weights, device):
+    ckpt = torch.load(weights, map_location='cpu') 
+    csd = ckpt['model'].float().state_dict()
+    csd = intersect_dicts(csd, model.state_dict(), exclude=[])
+    model.load_state_dict(csd, strict=False)
+    return model.to(device)
 
-class DetectMultiBackend(nn.Module):
+class RGBTDetectMultiBackend(nn.Module):
     # YOLOv5 MultiBackend class for python inference on various backends
     def __init__(self, backendmodel, weights='yolov5s.pt', device=torch.device('cpu'), dnn=False, data=None, fp16=False, fuse=True):
         # Usage:
@@ -306,22 +312,32 @@ class DetectMultiBackend(nn.Module):
 
         super().__init__()
         w = str(weights[0] if isinstance(weights, list) else weights)
-        pt, jit, onnx, xml, engine, coreml, saved_model, pb, tflite, edgetpu, tfjs, paddle, triton = self._model_type(w)
-        fp16 &= pt or jit or onnx or engine  # FP16
-        nhwc = coreml or saved_model or pb or tflite or edgetpu  # BHWC formats (vs torch BCWH)
+        
+        pt = self._model_type(w)[0]
+        jit = False
+        engine = False
+        onnx = False
+        saved_model = False
+        pb = False
+        triton = False
+        nhwc = False
+        fp16 &= pt  # FP16
+        # BHWC formats (vs torch BCWH)
         stride = 32  # default stride
         cuda = torch.cuda.is_available() and device.type != 'cpu'  # use CUDA
         # if not (pt or triton):
         #     w = attempt_download(w)  # download if not local
 
         if pt:  # PyTorch
-            weights = torch.load(weights)
-            model = backendmodel(3)
-            # model = attempt_load(weights if isinstance(weights, list) else w, device=device, inplace=True, fuse=fuse)
-            stride = max(int(model.stride.max()), 32)  # model stride
-            names = model.module.names if hasattr(model, 'module') else model.names  # get class names
-            model.half() if fp16 else model.float()
-            self.model = model  # explicitly assign for to(), cpu(), cuda(), half()
+            # weights = torch.load(weights)
+            ckpt = torch.load(weights, map_location='cpu') 
+            csd = ckpt['model'].float().state_dict()
+            csd = intersect_dicts(csd, backendmodel.state_dict(), exclude=[])
+            backendmodel.load_state_dict(csd, strict=False)
+            stride = max(int(backendmodel.detect_block.stride.max()), 32)  # backendmodel stride
+            names = backendmodel.module.names if hasattr(backendmodel, 'module') else backendmodel.names  # get class names
+            backendmodel.half() if fp16 else backendmodel.float()
+            self.model = backendmodel  # explicitly assign for to(), cpu(), cuda(), half()
         else:
             raise NotImplementedError(f'ERROR: {w} is not a supported format')
 
@@ -333,16 +349,18 @@ class DetectMultiBackend(nn.Module):
 
         self.__dict__.update(locals())  # assign all variables to self
 
-    def forward(self, im, augment=False, visualize=False):
+    def forward(self, im_rgb, im_t, augment=False, visualize=False):
         # YOLOv5 MultiBackend inference
-        b, ch, h, w = im.shape  # batch, channel, height, width
-        if self.fp16 and im.dtype != torch.float16:
-            im = im.half()  # to FP16
+        b, ch, h, w = im_t.shape  # batch, channel, height, width
+        if self.fp16 and im_t.dtype != torch.float16 and im_rgb.dtype != torch.float16:
+            im_rgb = im_rgb.half()  # to FP16
+            im_t = im_t.half()  # to FP16
         if self.nhwc:
-            im = im.permute(0, 2, 3, 1)  # torch BCHW to numpy BHWC shape(1,320,192,3)
+            im_rgb = im_rgb.permute(0, 2, 3, 1)  # torch BCHW to numpy BHWC shape(1,320,192,3)
+            im_t = im_t.permute(0, 2, 3, 1)  # torch BCHW to numpy BHWC shape(1,320,192,3)
 
         if self.pt:  # PyTorch
-            y = self.model(im, augment=augment, visualize=visualize) if augment or visualize else self.model(im)
+            y = self.model(im_rgb,im_t, augment=augment, visualize=visualize) if augment or visualize else self.model(im_rgb, im_t)
 
         if isinstance(y, (list, tuple)):
             return self.from_numpy(y[0]) if len(y) == 1 else [self.from_numpy(x) for x in y]
@@ -356,9 +374,10 @@ class DetectMultiBackend(nn.Module):
         # Warmup model by running inference once
         warmup_types = self.pt, self.jit, self.onnx, self.engine, self.saved_model, self.pb, self.triton
         if any(warmup_types) and (self.device.type != 'cpu' or self.triton):
-            im = torch.empty(*imgsz, dtype=torch.half if self.fp16 else torch.float, device=self.device)  # input
+            im_rgb = torch.empty(*imgsz, dtype=torch.half if self.fp16 else torch.float, device=self.device)  # input
+            im_t = torch.empty(*imgsz, dtype=torch.half if self.fp16 else torch.float, device=self.device)  # input            
             for _ in range(2 if self.jit else 1):  #
-                self.forward(im)  # warmup
+                self.forward(im_rgb, im_t)  # warmup
 
     @staticmethod
     def _model_type(p='path/to/model.pt'):
@@ -366,7 +385,7 @@ class DetectMultiBackend(nn.Module):
         # types = [pt, jit, onnx, xml, engine, coreml, saved_model, pb, tflite, edgetpu, tfjs, paddle]
         sf = ['pt']
         types = [s in Path(p).name for s in sf]
-        types[8] &= not types[9]  # tflite &= not edgetpu
+        #  types[8] &= not types[9]  # tflite &= not edgetpu
         # triton = not any(types) and all([any(s in url.scheme for s in ['http', 'grpc']), url.netloc])
         return types # + [triton]
 

@@ -8,9 +8,9 @@
 
 
 # Train/val/test sets as 1) dir: path/to/imgs, 2) file: path/to/imgs.txt, or 3) list: [path/to/imgs1, path/to/imgs2, ..]
-path: /home/zhengyuhang/datasets/LLVIP_yolo  # dataset root dir
-train: /home/zhengyuhang/datasets/LLVIP_yolo/images/train  # train images (relative to 'path') 118287 images
-val: /home/zhengyuhang/datasets/LLVIP_yolo/images/val  # val images (relative to 'path') 5000 images
+path: /home/cv/Project1/yuhang/datasets/LLVIP_yolo  # dataset root dir
+train: /home/cv/Project1/yuhang/datasets/LLVIP_yolo/images/train  # train images (relative to 'path') 118287 images
+val: /home/cv/Project1/yuhang/datasets/LLVIP_yolo/images/val  # val images (relative to 'path') 5000 images
 
 # Classes
 names:

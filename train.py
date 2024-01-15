@@ -41,8 +41,8 @@ if str(ROOT) not in sys.path:
 ROOT = Path(os.path.relpath(ROOT, Path.cwd()))  # relative
 
 import val as validate  # for end-of-epoch mAP
-# from models.experimental import attempt_load
-from model.frame import layer_fusion_1
+from model.common import attempt_load
+from model.frame import RGBTModel
 from utils.anchor import check_anchors
 # from utils.autobatch import check_train_batch_size
 from utils.callbacks import Callbacks
@@ -121,14 +121,14 @@ def train(hyp, opt, device, callbacks):  # hyp is path/to/hyp.yaml or hyp dictio
         # with torch_distributed_zero_first(LOCAL_RANK):
         #     weights = attempt_download(weights)  # download if not found locally
         ckpt = torch.load(weights, map_location='cpu')  # load checkpoint to CPU to avoid CUDA memory leak
-        model = layer_fusion_1( ch=3, nc=nc).to(device)  # create
+        model = RGBTModel( ch=3, nc=nc, gd=0.33, gw=0.5).to(device)  # create
         exclude = ['anchor'] if (hyp.get('anchors')) and not resume else []  # exclude keys
         csd = ckpt['model'].float().state_dict()  # checkpoint state_dict as FP32
         csd = intersect_dicts(csd, model.state_dict(), exclude=exclude)  # intersect
         model.load_state_dict(csd, strict=False)  # load
         LOGGER.info(f'Transferred {len(csd)}/{len(model.state_dict())} items from {weights}')  # report
     else:
-        model = layer_fusion_1(ch=3, nc=nc).to(device)  # create
+        model = RGBTModel(ch=3, nc=nc, gd=0.33, gw=0.5).to(device)  # create
     # amp = check_amp(model)  # check AMP
     amp = False
     # Freeze
@@ -190,7 +190,7 @@ def train(hyp, opt, device, callbacks):  # hyp is path/to/hyp.yaml or hyp dictio
                                               gs,
                                               single_cls,
                                               hyp=hyp,
-                                              augment=False,
+                                              augment=True,
                                               cache=None if opt.cache == 'val' else opt.cache,
                                               rect=opt.rect,
                                               rank=LOCAL_RANK,
@@ -340,6 +340,13 @@ def train(hyp, opt, device, callbacks):  # hyp is path/to/hyp.yaml or hyp dictio
                 pbar.set_description(('%11s' * 2 + '%11.4g' * 5) %
                                      (f'{epoch}/{epochs - 1}', mem, *mloss, targets.shape[0], img_t.shape[-1]))
                 callbacks.run('on_train_batch_end', model, ni, img_rgb, img_t, targets, t_paths, list(mloss))
+                if ni < 3:
+                    rgb_f = save_dir / f'rgb_train_batch{ni}.jpg'  # filename
+                    t_f = save_dir / f't_train_batch{ni}.jpg'  # filename
+                    
+                    plot_images(img_t, targets, t_paths, t_f)
+                    plot_images(img_rgb, targets, rgb_paths, rgb_f)
+
                 if callbacks.stop_training:
                     return
             # end batch ------------------------------------------------------------------------------------------------
@@ -362,7 +369,7 @@ def train(hyp, opt, device, callbacks):  # hyp is path/to/hyp.yaml or hyp dictio
                                                 single_cls=single_cls,
                                                 dataloader=val_loader,
                                                 save_dir=save_dir,
-                                                plots=False,
+                                                plots=True,
                                                 callbacks=callbacks,
                                                 compute_loss=compute_loss)
 
@@ -414,20 +421,20 @@ def train(hyp, opt, device, callbacks):  # hyp is path/to/hyp.yaml or hyp dictio
                 strip_optimizer(f)  # strip optimizers
                 if f is best:
                     LOGGER.info(f'\nValidating {f}...')
-                    # results, _, _ = validate.run(
-                    #     data_dict,
-                    #     batch_size=batch_size // WORLD_SIZE * 2,
-                    #     imgsz=imgsz,
-                    #     model=layer_fusion_1.half(), # attempt_load(f, device).half(),
-                    #     iou_thres=0.65 if is_coco else 0.60,  # best pycocotools at iou 0.65
-                    #     single_cls=single_cls,
-                    #     dataloader=val_loader,
-                    #     save_dir=save_dir,
-                    #     save_json=is_coco,
-                    #     verbose=True,
-                    #     plots=plots,
-                    #     callbacks=callbacks,
-                    #     compute_loss=compute_loss)  # val best model with plots
+                    results, _, _ = validate.run(
+                        data_dict,
+                        batch_size=batch_size // WORLD_SIZE * 2,
+                        imgsz=imgsz,
+                        model=attempt_load(RGBTModel(ch=3, nc=nc, gd=0.33, gw=0.5), f, device).half(), # attempt_load(f, device).half(),
+                        iou_thres=0.65 if is_coco else 0.60,  # best pycocotools at iou 0.65
+                        single_cls=single_cls,
+                        dataloader=val_loader,
+                        save_dir=save_dir,
+                        save_json=is_coco,
+                        verbose=True,
+                        plots=plots,
+                        callbacks=callbacks,
+                        compute_loss=compute_loss)  # val best model with plots
                     if is_coco:
                         callbacks.run('on_fit_epoch_end', list(mloss) + list(results) + lr, epoch, best_fitness, fi)
 

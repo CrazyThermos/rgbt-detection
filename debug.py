@@ -125,30 +125,60 @@ if __name__ == "__main__":
     #     print(img_t)
     #     pass
 
+
     '''
     debug train_loader
     '''
-    import tqdm
-    train_loader, dataset = create_rgbtdataloader('/home/zhengyuhang/datasets/LLVIP_yolo/images/train',
-                                            640,
+    # import tqdm
+    val_loader, dataset = create_rgbtdataloader('/home/cv/Project1/yuhang/datasets/TEST/images/val',
+                                            1280,
                                             4,
                                             stride=32,
                                             single_cls=False,
                                             hyp='/home/zhengyuhang/multimodal-object-detection/RGBT-Detection/configs/hyp.scratch-low.yaml',
-                                            augment=False,
-                                            cache=False,
                                             rect=True,
-                                            rank=LOCAL_RANK,
                                             workers=8,
-                                            image_weights=False,
-                                            quad=False,
-                                            prefix='train: ',
-                                            shuffle=True,
-                                            seed=0)
-    # train_loader.sampler.set_epoch(4)
-    pbar = enumerate(train_loader)
-    # pbar = tqdm(pbar) 
-    for i, (img_rgb, img_t, targets, rgb_paths,t_paths, _) in pbar:
-        print(rgb_paths)
-        print(t_paths)
-        print(targets)
+                                            rank=-1,
+                                            pad=0.0,
+                                            prefix='val: '
+                                            )
+    # # train_loader.sampler.set_epoch(4)
+    # pbar = enumerate(train_loader)
+    # # pbar = tqdm(pbar) 
+    # for i, (img_rgb, img_t, targets, rgb_paths,t_paths, _) in pbar:
+    #     print(rgb_paths)
+    #     print(t_paths)
+    #     print(targets)
+    import val as validate
+    from utils.loss import ComputeLoss 
+    from utils.callbacks import Callbacks
+    from utils.general import check_dataset
+    nc=1
+    imgsz=1280
+    nl=3
+    hyp='configs/hyp.scratch-low.yaml'
+    with open(hyp, errors='ignore') as f:
+            hyp = yaml.safe_load(f)
+    hyp['box'] *= 3 / nl  # scale to layers
+    hyp['cls'] *= nc / 80 * 3 / nl  # scale to classes and layers
+    hyp['obj'] *= (imgsz / 640) ** 2 * 3 / nl  # scale to image size and layers
+    backendmodel = layer_fusion_1(3, nc=1, gd=0.33,gw=0.5).to(device='cuda:0')
+    backendmodel.names = ['person']
+    backendmodel.hyp = hyp
+    data_dict = check_dataset('dataset/test.yaml') 
+    callbacks = Callbacks()
+    results, _, _ = validate.run(data_dict,
+                                 backendmodel=backendmodel,
+                                weights='/home/cv/Project1/yuhang/RGBT-Detection/runs/train/rgbt55/weights/best.pt',
+                                batch_size=2,
+                                imgsz=1280,
+                                model=None, # attempt_load(f, device).half(),
+                                iou_thres=0.60,  # best pycocotools at iou 0.65
+                                single_cls=False,
+                                dataloader=val_loader,
+                                save_dir='./output/backend',
+                                save_json=False,
+                                verbose=True,
+                                plots=True,
+                                callbacks=callbacks,
+                                compute_loss=ComputeLoss(backendmodel))  # val best model with plots

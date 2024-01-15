@@ -36,7 +36,7 @@ if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))  # add ROOT to PATH
 ROOT = Path(os.path.relpath(ROOT, Path.cwd()))  # relative
 
-# from models.common import DetectMultiBackend
+from model.common import RGBTDetectMultiBackend
 from utils.callbacks import Callbacks
 from dataset.rgbt_dataset import create_rgbtdataloader
 from utils.general import (LOGGER, TQDM_BAR_FORMAT, check_dataset, check_img_size,
@@ -45,7 +45,7 @@ from utils.general import (LOGGER, TQDM_BAR_FORMAT, check_dataset, check_img_siz
 from utils.metrics import ConfusionMatrix, ap_per_class, box_iou
 # from utils.plots import output_to_target, plot_images, plot_val_study
 from utils.torch_utils import select_device, smart_inference_mode
-
+from utils.general import plot_images, output_to_target
 
 def save_one_txt(predn, save_conf, shape, file):
     # Save one txt result
@@ -120,6 +120,7 @@ def run(
         half=True,  # use FP16 half-precision inference
         dnn=False,  # use OpenCV DNN for ONNX inference
         model=None,
+        backendmodel=None,
         dataloader=None,
         save_dir=Path(''),
         plots=True,
@@ -128,7 +129,6 @@ def run(
 ):
     # Initialize/load model and set device
     training = model is not None
-    backendmodel = model
     if training:  # called by train.py
         device, pt, jit, engine = next(model.parameters()).device, True, False, False  # get model device, PyTorch model
         half &= device.type != 'cpu'  # half precision only supported on CUDA
@@ -142,7 +142,7 @@ def run(
 
         # Load model
 
-        model = DetectMultiBackend(backendmodel, weights, device=device, dnn=dnn, data=data, fp16=half)
+        model = RGBTDetectMultiBackend(backendmodel, weights, device=device, dnn=dnn, data=data, fp16=half)
         stride, pt, jit, engine = model.stride, model.pt, model.jit, model.engine
         imgsz = check_img_size(imgsz, s=stride)  # check image size
         half = model.fp16  # FP16 supported on limited backends with CUDA
@@ -202,7 +202,6 @@ def run(
         # with dt[0]:
         if cuda:
             im_rgb = im_rgb.to(device, non_blocking=True)
-            targets = targets.to(device)
             im_t = im_t.to(device, non_blocking=True)
             targets = targets.to(device)
 
@@ -273,9 +272,11 @@ def run(
             callbacks.run('on_val_image_end', pred, predn, path, names, im_t[si])
 
         # Plot images
-        # if plots and batch_i < 3:
-        #     plot_images(im, targets, paths, save_dir / f'val_batch{batch_i}_labels.jpg', names)  # labels
-        #     plot_images(im, output_to_target(preds), paths, save_dir / f'val_batch{batch_i}_pred.jpg', names)  # pred
+        if plots and batch_i < 3:
+            plot_images(im_t, targets, t_paths, save_dir / f't_val_batch{batch_i}_labels.jpg', names)  # labels
+            plot_images(im_rgb, targets, rgb_paths, save_dir / f'rgb_val_batch{batch_i}_labels.jpg', names)  # labels
+            plot_images(im_t, output_to_target(preds), t_paths, save_dir / f't_val_batch{batch_i}_pred.jpg', names)  # pred
+            plot_images(im_rgb, output_to_target(preds), rgb_paths, save_dir / f'rgb_val_batch{batch_i}_pred.jpg', names)  # pred
 
         callbacks.run('on_val_batch_end', batch_i, im_t, targets, t_paths, shapes, preds)
 

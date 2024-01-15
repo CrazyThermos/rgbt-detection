@@ -8,11 +8,13 @@ from model.neck import Yolov5Neck
 from model.head import Yolov5DetectHead
 from model.fuseblock import fuse_block_conv1x1
 
+
 class layer_fusion_1(nn.Module):
     def __init__(self, ch, gd=1.0, gw=1.0, last_ch=1024, nc=2) -> None:
         super().__init__()
         self.gd = gd
         self.gw = gw
+        self.nc = nc
         self.rgb_conv_1 = Conv(ch, self.gw_div(last_ch//16), 6, 2, 2)
         self.rgb_block1 = yolov5_backbone_block(last_ch//16, last_ch//8, n=3, gd=gd, gw=gw)
         self.rgb_block2 = yolov5_backbone_block(last_ch//8, last_ch//4, n=6, gd=gd, gw=gw)
@@ -81,6 +83,7 @@ class layer_fusion_2(nn.Module):
         return
 
 
+RGBTModel = layer_fusion_1
 
     
 

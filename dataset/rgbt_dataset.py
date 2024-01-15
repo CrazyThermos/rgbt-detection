@@ -45,7 +45,6 @@ class RGBTDataloader(Dataset):
         self.path = path
         self.albumentations = Albumentations(size=img_size) if augment else None
 
-
         
         try:
             f = []  # image files
@@ -65,10 +64,15 @@ class RGBTDataloader(Dataset):
             self.rgb_files = sorted(x.replace('/', os.sep) for x in f if '_rgb' in x.split('.')[0]) # x.split('.')[-1].lower() in IMG_FORMATS
             self.t_files = sorted(x.replace('/', os.sep) for x in f if '_t' in x.split('.')[0]) # x.split('.')[-1].lower() in IMG_FORMATS
             
+            
             # self.im_files = sorted([x for x in f if x.suffix[1:].lower() in IMG_FORMATS])  # pathlib
             assert self.rgb_files, f'{prefix}No rgb images found'
-            assert self.rgb_files, f'{prefix}No t images found'
-
+            assert self.t_files, f'{prefix}No t images found'
+            #check img is pair
+            assert len(self.rgb_files) == len(self.t_files), f'{prefix}rgb images number is not equal t images {len(self.rgb_files)} != {len(self.t_files)}'
+            for index in range(len(self.rgb_files)):
+               assert self.rgb_files[index].split('_rgb')[0] == self.t_files[index].split('_t')[0], f'{prefix} index:{index}'
+        
         except Exception as e:
             raise Exception(f'{prefix}Error loading data from {path}: {e}\n') from e
 
@@ -98,10 +102,12 @@ class RGBTDataloader(Dataset):
         assert nl > 0 or not augment, f'{prefix}All labels empty in {cache_path}, can not start training. '
         self.labels = list(labels)
         self.shapes = np.array(shapes)
-        self.rgb_files = [x for x in cache.keys() if '_rgb' in x]  # update
-        self.t_files = [x for x in cache.keys() if '_t' in x]
-        self.label_files = img2label_paths([x for x in cache.keys() if '_t' in x])  # update
-
+        self.rgb_files = [x for x in cache.keys() if '_rgb' in x.split('/')[-1]]  # update
+        self.t_files = [x for x in cache.keys() if '_t' in x.split('/')[-1]]
+        self.label_files = img2label_paths([x for x in cache.keys() if '_t' in x.split('/')[-1]])  # update
+        for index in range(len(self.rgb_files)):
+            assert self.rgb_files[index].split('_rgb')[0] == self.t_files[index].split('_t')[0], f'{prefix} index:{index}'
+            
         # Filter images
         if min_items:
             include = np.array([len(x) >= min_items for x in self.labels]).nonzero()[0].astype(int)
@@ -268,7 +274,7 @@ class RGBTDataloader(Dataset):
         mosaic = self.mosaic and random.random() < hyp['mosaic']
         if mosaic:
             # Load mosaic
-            img, labels = self.load_mosaic(index)
+            img_rgb, img_t, labels = self.load_mosaic(index)
             shapes = None
 
             # MixUp augmentation
@@ -293,38 +299,39 @@ class RGBTDataloader(Dataset):
                 labels[:, 1:] = xywhn2xyxy(labels[:, 1:], ratio[0] * w, ratio[1] * h, padw=pad[0], padh=pad[1])
 
             if self.augment:
-                img_t, labels = random_perspective(img_t,
-                                                 labels,
-                                                 degrees=hyp['degrees'],
-                                                 translate=hyp['translate'],
-                                                 scale=hyp['scale'],
-                                                 shear=hyp['shear'],
-                                                 perspective=hyp['perspective'])
+                img_rgb, img_t, labels = rgbt_random_perspective(img_rgb,
+                                                                img_t,
+                                                                labels,
+                                                                degrees=hyp['degrees'],
+                                                                translate=hyp['translate'],
+                                                                scale=hyp['scale'],
+                                                                shear=hyp['shear'],
+                                                                perspective=hyp['perspective'])
 
         nl = len(labels)  # number of labels
         if nl:
             labels[:, 1:5] = xyxy2xywhn(labels[:, 1:5], w=img_t.shape[1], h=img_t.shape[0], clip=True, eps=1E-3)
 
         if self.augment:
-            pass
-            # Albumentations
-            img, labels = self.albumentations(img, labels)
-            nl = len(labels)  # update after albumentations
+            pass            
+            # # Albumentations
+            # img, labels = self.albumentations(img, labels)
+            # nl = len(labels)  # update after albumentations
 
-            # HSV color-space
-            augment_hsv(img, hgain=hyp['hsv_h'], sgain=hyp['hsv_s'], vgain=hyp['hsv_v'])
+            # # HSV color-space
+            # augment_hsv(img, hgain=hyp['hsv_h'], sgain=hyp['hsv_s'], vgain=hyp['hsv_v'])
 
-            # Flip up-down
-            if random.random() < hyp['flipud']:
-                img = np.flipud(img)
-                if nl:
-                    labels[:, 2] = 1 - labels[:, 2]
+            # # Flip up-down
+            # if random.random() < hyp['flipud']:
+            #     img = np.flipud(img)
+            #     if nl:
+            #         labels[:, 2] = 1 - labels[:, 2]
 
-            # Flip left-right
-            if random.random() < hyp['fliplr']:
-                img = np.fliplr(img)
-                if nl:
-                    labels[:, 1] = 1 - labels[:, 1]
+            # # Flip left-right
+            # if random.random() < hyp['fliplr']:
+            #     img = np.fliplr(img)
+            #     if nl:
+            #         labels[:, 1] = 1 - labels[:, 1]
 
             # Cutouts
             # labels = cutout(img, labels, p=0.5)
@@ -340,7 +347,8 @@ class RGBTDataloader(Dataset):
         img_t = img_t.transpose((2, 0, 1))[::-1]  # HWC to CHW, BGR to RGB
         img_t = np.ascontiguousarray(img_t)
 
-        return torch.from_numpy(img_rgb), torch.from_numpy(img_t), labels_out, self.rgb_files[index],self.t_files[index], shapes
+        return torch.from_numpy(img_rgb), torch.from_numpy(img_t), labels_out, self.rgb_files[index], self.t_files[index], shapes
+
 
     def load_image(self, i, imtype='t'):
         # Loads 1 image from dataset index 'i', returns (im, original hw, resized hw)
@@ -382,11 +390,14 @@ class RGBTDataloader(Dataset):
         random.shuffle(indices)
         for i, index in enumerate(indices):
             # Load image
-            img, _, (h, w) = self.load_image(index)
+            img_rgb, _, (_, _) = self.load_image(index, imtype='rgb')
+            img_t, _, (h, w) = self.load_image(index, imtype='t')
+
 
             # place img in img4
             if i == 0:  # top left
-                img4 = np.full((s * 2, s * 2, img.shape[2]), 114, dtype=np.uint8)  # base image with 4 tiles
+                img_rgb4 = np.full((s * 2, s * 2, img_rgb.shape[2]), 114, dtype=np.uint8)  # base image with 4 tiles
+                img_t4 = np.full((s * 2, s * 2, img_t.shape[2]), 114, dtype=np.uint8)  # base image with 4 tiles
                 x1a, y1a, x2a, y2a = max(xc - w, 0), max(yc - h, 0), xc, yc  # xmin, ymin, xmax, ymax (large image)
                 x1b, y1b, x2b, y2b = w - (x2a - x1a), h - (y2a - y1a), w, h  # xmin, ymin, xmax, ymax (small image)
             elif i == 1:  # top right
@@ -399,7 +410,8 @@ class RGBTDataloader(Dataset):
                 x1a, y1a, x2a, y2a = xc, yc, min(xc + w, s * 2), min(s * 2, yc + h)
                 x1b, y1b, x2b, y2b = 0, 0, min(w, x2a - x1a), min(y2a - y1a, h)
 
-            img4[y1a:y2a, x1a:x2a] = img[y1b:y2b, x1b:x2b]  # img4[ymin:ymax, xmin:xmax]
+            img_rgb4[y1a:y2a, x1a:x2a] = img_rgb[y1b:y2b, x1b:x2b]  # img4[ymin:ymax, xmin:xmax]
+            img_t4[y1a:y2a, x1a:x2a] = img_t[y1b:y2b, x1b:x2b]  # img4[ymin:ymax, xmin:xmax]
             padw = x1a - x1b
             padh = y1a - y1b
 
@@ -418,18 +430,19 @@ class RGBTDataloader(Dataset):
         # img4, labels4 = replicate(img4, labels4)  # replicate
 
         # Augment
-        img4, labels4, segments4 = copy_paste(img4, labels4, segments4, p=self.hyp['copy_paste'])
-        img4, labels4 = random_perspective(img4,
-                                           labels4,
-                                           segments4,
-                                           degrees=self.hyp['degrees'],
-                                           translate=self.hyp['translate'],
-                                           scale=self.hyp['scale'],
-                                           shear=self.hyp['shear'],
-                                           perspective=self.hyp['perspective'],
-                                           border=self.mosaic_border)  # border to remove
+        img_rgb4, img_t4, labels4, segments4 = rgbt_copy_paste(img_rgb4, img_t4, labels4, segments4, p=self.hyp['copy_paste'])
+        img_rgb4, img_t4, labels4 = rgbt_random_perspective(img_rgb4, 
+                                                            img_t4,
+                                                            labels4,
+                                                            segments4,
+                                                            degrees=self.hyp['degrees'],
+                                                            translate=self.hyp['translate'],
+                                                            scale=self.hyp['scale'],
+                                                            shear=self.hyp['shear'],
+                                                            perspective=self.hyp['perspective'],
+                                                            border=self.mosaic_border)  # border to remove
 
-        return img4, labels4
+        return img_rgb4, img_t4, labels4
 
     def load_mosaic9(self, index):
         # YOLOv5 9-mosaic loader. Loads 1 image + 8 random images into a 9-image mosaic
