@@ -16,7 +16,7 @@ from pathlib import Path
 from utils.general import *
 
 class RGBTDataloader(Dataset):
-    # YOLOv5 train_loader/val_loader, loads images and labels for training and validation
+    # RGB-T train_loader/val_loader, loads images and labels for training and validation
     cache_version = 0.6  # dataset labels *.cache version
     rand_interp_methods = [cv2.INTER_NEAREST, cv2.INTER_LINEAR, cv2.INTER_CUBIC, cv2.INTER_AREA, cv2.INTER_LANCZOS4]
 
@@ -43,7 +43,7 @@ class RGBTDataloader(Dataset):
         self.mosaic_border = [-img_size // 2, -img_size // 2]
         self.stride = stride
         self.path = path
-        self.albumentations = Albumentations(size=img_size) if augment else None
+        self.albumentations = RGBTAlbumentations(size=img_size) if augment else None
 
         
         try:
@@ -61,14 +61,15 @@ class RGBTDataloader(Dataset):
                         # f += [p.parent / x.lstrip(os.sep) for x in t]  # to global path (pathlib)
                 else:
                     raise FileNotFoundError(f'{prefix}{p} does not exist')
-            self.rgb_files = sorted(x.replace('/', os.sep) for x in f if '_rgb' in x.split('.')[0]) # x.split('.')[-1].lower() in IMG_FORMATS
-            self.t_files = sorted(x.replace('/', os.sep) for x in f if '_t' in x.split('.')[0]) # x.split('.')[-1].lower() in IMG_FORMATS
+            # yuhang: Read RGB images and infrared images separately according to the suffix
+            self.rgb_files = sorted(x.replace('/', os.sep) for x in f if '_rgb' in x.split('.')[0]) 
+            self.t_files = sorted(x.replace('/', os.sep) for x in f if '_t' in x.split('.')[0]) 
             
             
             # self.im_files = sorted([x for x in f if x.suffix[1:].lower() in IMG_FORMATS])  # pathlib
             assert self.rgb_files, f'{prefix}No rgb images found'
             assert self.t_files, f'{prefix}No t images found'
-            #check img is pair
+            # yuhang: Check if the images are paired
             assert len(self.rgb_files) == len(self.t_files), f'{prefix}rgb images number is not equal t images {len(self.rgb_files)} != {len(self.t_files)}'
             for index in range(len(self.rgb_files)):
                assert self.rgb_files[index].split('_rgb')[0] == self.t_files[index].split('_t')[0], f'{prefix} index:{index}'
@@ -102,6 +103,7 @@ class RGBTDataloader(Dataset):
         assert nl > 0 or not augment, f'{prefix}All labels empty in {cache_path}, can not start training. '
         self.labels = list(labels)
         self.shapes = np.array(shapes)
+        # yuhang: Check if the images in cache are paired
         self.rgb_files = [x for x in cache.keys() if '_rgb' in x.split('/')[-1]]  # update
         self.t_files = [x for x in cache.keys() if '_t' in x.split('/')[-1]]
         self.label_files = img2label_paths([x for x in cache.keys() if '_t' in x.split('/')[-1]])  # update
@@ -109,6 +111,7 @@ class RGBTDataloader(Dataset):
             assert self.rgb_files[index].split('_rgb')[0] == self.t_files[index].split('_t')[0], f'{prefix} index:{index}'
             
         # Filter images
+        # yuhang: Filter RGB and infrared images separately
         if min_items:
             include = np.array([len(x) >= min_items for x in self.labels]).nonzero()[0].astype(int)
             LOGGER.info(f'{prefix}{n - len(include)}/{n} images filtered from dataset')
@@ -140,6 +143,7 @@ class RGBTDataloader(Dataset):
                 self.labels[i][:, 0] = 0
 
         # Rectangular Training
+        # yuhang: Rectangular RGB and infrared images separately
         if self.rect:
             # Sort by aspect ratio
             s = self.shapes[0:n]  # wh
@@ -207,6 +211,8 @@ class RGBTDataloader(Dataset):
         x = {}  # dict
         nm, nf, ne, nc, msgs = 0, 0, 0, 0, []  # number missing, found, empty, corrupt, messages
         desc = f'{prefix}Scanning {path.parent / path.stem}...'
+
+        # yuhang: Verify RGB and infrared images separately
         with Pool(NUM_THREADS) as pool:
             rgb_pbar = tqdm(pool.imap(verify_image_label, zip(self.rgb_files, self.label_files, repeat(prefix))),
                         desc=desc,
@@ -272,6 +278,8 @@ class RGBTDataloader(Dataset):
 
         hyp = self.hyp
         mosaic = self.mosaic and random.random() < hyp['mosaic']
+
+        # yuhang: In data augmentation, RGB and infrared images need to be enhanced in pairs
         if mosaic:
             # Load mosaic
             img_rgb, img_t, labels = self.load_mosaic(index)
@@ -279,7 +287,7 @@ class RGBTDataloader(Dataset):
 
             # MixUp augmentation
             if random.random() < hyp['mixup']:
-                img, labels = mixup(img, labels, *self.load_mosaic(random.randint(0, self.n - 1)))
+                img_rgb, img_t, labels = rgbt_mixup(img_rgb, img_t, labels, *self.load_mosaic(random.randint(0, self.n - 1)))
 
         else:
             # Load image
@@ -312,6 +320,7 @@ class RGBTDataloader(Dataset):
         if nl:
             labels[:, 1:5] = xyxy2xywhn(labels[:, 1:5], w=img_t.shape[1], h=img_t.shape[0], clip=True, eps=1E-3)
 
+        # yuhang: In data augmentation, RGB and infrared images need to be enhanced in pairs
         if self.augment:         
             # Albumentations
             img_rgb, img_t, labels = self.albumentations(img_rgb, img_t, labels)
@@ -354,7 +363,8 @@ class RGBTDataloader(Dataset):
 
 
     def load_image(self, i, imtype='t'):
-        # Loads 1 image from dataset index 'i', returns (im, original hw, resized hw)
+        # Loads 1 image from specify the type of dataset index 'i', returns (im, original hw, resized hw)
+        # imtype mean the type of dataset, rgb/t
         if imtype == 't': 
             im, f, fn = self.ims[i], self.t_files[i], self.npy_files[i],
         elif imtype == 'rgb':
@@ -385,7 +395,9 @@ class RGBTDataloader(Dataset):
 
 
     def load_mosaic(self, index):
-        # YOLOv5 4-mosaic loader. Loads 1 image + 3 random images into a 4-image mosaic
+        # RGBT 4-mosaic loader. 
+        # Loads 1 RGB image + 3 random RGB images into a 4-image RGB mosaic. 
+        # Loads 1 T image + 3 random T images into a 4-image T mosaic
         labels4, segments4 = [], []
         s = self.img_size
         yc, xc = (int(random.uniform(-x, 2 * s + x)) for x in self.mosaic_border)  # mosaic center x, y
@@ -396,11 +408,10 @@ class RGBTDataloader(Dataset):
             img_rgb, _, (_, _) = self.load_image(index, imtype='rgb')
             img_t, _, (h, w) = self.load_image(index, imtype='t')
 
-
             # place img in img4
             if i == 0:  # top left
-                img_rgb4 = np.full((s * 2, s * 2, img_rgb.shape[2]), 114, dtype=np.uint8)  # base image with 4 tiles
-                img_t4 = np.full((s * 2, s * 2, img_t.shape[2]), 114, dtype=np.uint8)  # base image with 4 tiles
+                img_rgb4 = np.full((s * 2, s * 2, img_rgb.shape[2]), 114, dtype=np.uint8)  # base RGB image with 4 tiles
+                img_t4 = np.full((s * 2, s * 2, img_t.shape[2]), 114, dtype=np.uint8)  # base T image with 4 tiles
                 x1a, y1a, x2a, y2a = max(xc - w, 0), max(yc - h, 0), xc, yc  # xmin, ymin, xmax, ymax (large image)
                 x1b, y1b, x2b, y2b = w - (x2a - x1a), h - (y2a - y1a), w, h  # xmin, ymin, xmax, ymax (small image)
             elif i == 1:  # top right

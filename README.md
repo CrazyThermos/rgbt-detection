@@ -1,15 +1,48 @@
 # rgbt-detection
 
-## 简单通用的目标检测框架
-* 支持单阶段和双阶段模型
-* 支持anchor base和 anchor free
-* 支持多模态的目标检测
+## 简单通用的RGBT目标检测框架
+* 支持单阶段模型 √
+* 支持双阶段模型 x
+* 支持anchor base √
+* anchor free
+* 支持rgb-t双模态的目标检测 √
+## 使用方法
+在 frame.py backbone.py fuseblock.py neck.py head.py中定义你的模型
+
+backbone.py 中定义主干网络，使用预训练主干可省略
+
+fuseblock.py 中定义融合模块
+
+neck.py和head.py中定义neck和head层
+
+在frame.py中实现整个网络
+
+训练命令如下
+```
+python train.py --data dataset/llvip.yaml --hyp configs/hyp.scratch-low.yaml --optimizer SGD --batch-size 8 --epochs 300 --img 1280 --name rgbt --device 0
+```
+
 ## 文件来源
-* utils/utils.py from pytorch
-* utils/coco_eval.py from pytorch
-* utils/coco_utils.py from pytorch
-* utils/transfroms.py from pytorch
-* utils/engine.py from pytorch
+* ~~utils/utils.py from pytorch~~
+* utils/coco/coco_eval.py from pytorch
+* utils/coco/coco_utils.py from pytorch
+* utils/coco/transfroms.py from pytorch
+* utils/coco/engine.py from pytorch
 
 * utils/loss.py from yolov5
 * utils/metrics.py from yolov5
+* utils/anchor.py from yolov5
+* utils/general.py from yolov5
+* utils/torch_utils.py from yolov5
+* utils/autobatch.py from yolov5
+* utils/callbacks.py from yolov5
+* train.py from yolov5
+* val.py from yolov5
+* dataset/base_dataset.py from yolov5
+* dataset/rgbt_dataset.py from yolov5
+
+
+
+
+
+

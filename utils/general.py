@@ -67,15 +67,26 @@ def emojis(str=''):
     # Return platform-dependent emoji-safe version of string
     return str.encode().decode('ascii', 'ignore') if platform.system() == 'Windows' else str
 
+
 set_logging(LOGGING_NAME)  # run before defining LOGGER
 LOGGER = logging.getLogger(LOGGING_NAME)  # define globally (used in train.py, val.py, detect.py, etc.)
 if platform.system() == 'Windows':
     for fn in LOGGER.info, LOGGER.warning:
         setattr(LOGGER, fn.__name__, lambda x: fn(emojis(x)))  # emoji safe logging
 
+
 for orientation in ExifTags.TAGS.keys():
     if ExifTags.TAGS[orientation] == 'Orientation':
         break
+
+#yuhang: mixup for rgbt
+def rgbt_mixup(im_rgb, im_t, labels, im2_rgb, im2_t, labels2):
+    r = np.random.beta(32.0, 32.0)  # mixup ratio, alpha=beta=32.0
+    im_rgb = (im_rgb * r + im2_rgb * (1 - r)).astype(np.uint8)
+    im_t = (im_t * r + im2_t * (1 - r)).astype(np.uint8)
+    labels = np.concatenate((labels, labels2), 0)
+    return im_rgb, im_t, labels
+
 
 def mixup(im, labels, im2, labels2):
     # Applies MixUp augmentation https://arxiv.org/pdf/1710.09412.pdf
@@ -84,10 +95,12 @@ def mixup(im, labels, im2, labels2):
     labels = np.concatenate((labels, labels2), 0)
     return im, labels
 
+
 def img2label_paths(img_paths):
     # Define label paths as a function of image paths
     sa, sb = f'{os.sep}images{os.sep}', f'{os.sep}labels{os.sep}'  # /images/, /labels/ substrings
     return [sb.join(x.rsplit(sa, 1)).rsplit('.', 1)[0] + '.txt' for x in img_paths]
+
 
 def init_seeds(seed=0, deterministic=False):
     # Initialize random number generator (RNG) seeds https://pytorch.org/docs/stable/notes/randomness.html
@@ -252,6 +265,7 @@ def resample_segments(segments, n=1000):
     return segments
 
 
+#yuhang: random_perspective for rgbt
 def rgbt_random_perspective(im_rgb, 
                             im_t,
                             targets=(),
@@ -457,6 +471,7 @@ def de_parallel(model):
     return model.module if is_parallel(model) else model
 
 
+# yuhang: copy_paste for rgbt
 def rgbt_copy_paste(im_rgb, im_t, labels, segments, p=0.5):
     # Implement Copy-Paste augmentation https://arxiv.org/abs/2012.07177, labels as nx5 np.array(cls, xyxy)
     n = len(segments)
@@ -798,8 +813,8 @@ def non_max_suppression(
     return output
 
 
-class Albumentations:
-    # YOLOv5 Albumentations class (optional, only used if package is installed)
+class RGBTAlbumentations:
+    # RGBT Albumentations class (optional, only used if package is installed)
     def __init__(self, size=640):
         self.transform = None
         prefix = colorstr('albumentations: ')
@@ -830,6 +845,7 @@ class Albumentations:
             new_t = self.transform(image=im_t, bboxes=labels[:, 1:], class_labels=labels[:, 0])  # transformed
             im_rgb, im_t, labels = new_rgb['image'], new_t['image'], np.array([[c, *b] for c, b in zip(new_t['class_labels'], new_t['bboxes'])])
         return im_rgb, im_t, labels
+
 
 def augment_hsv(im, hgain=0.5, sgain=0.5, vgain=0.5):
     # HSV color-space augmentation
