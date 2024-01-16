@@ -13,7 +13,9 @@ from tqdm import tqdm
 from itertools import repeat
 from multiprocessing.pool import Pool, ThreadPool
 from pathlib import Path
-from utils.general import *
+from utils.general import LOCAL_RANK, LOGGER, TQDM_BAR_FORMAT, NUM_THREADS, RANK, PIN_MEMORY, RGBTAlbumentations, img2label_paths, get_hash, \
+    seed_worker, verify_image_label, rgbt_copy_paste, rgbt_mixup, rgbt_random_perspective, letterbox, xywhn2xyxy, \
+    xyxy2xywhn, augment_hsv, xyn2xy, torch_distributed_zero_first
 
 class RGBTDataloader(Dataset):
     # RGB-T train_loader/val_loader, loads images and labels for training and validation
@@ -467,11 +469,14 @@ class RGBTDataloader(Dataset):
         hp, wp = -1, -1  # height, width previous
         for i, index in enumerate(indices):
             # Load image
-            img, _, (h, w) = self.load_image(index)
+            img_rgb, _, (_, _) = self.load_image(index, imtype='rgb')
+            img_t, _, (h, w) = self.load_image(index, imtype='t')
+
 
             # place img in img9
             if i == 0:  # center
-                img9 = np.full((s * 3, s * 3, img.shape[2]), 114, dtype=np.uint8)  # base image with 4 tiles
+                img_rgb9 = np.full((s * 3, s * 3, img_rgb.shape[2]), 114, dtype=np.uint8)  # base image with 4 tiles
+                img_t9 = np.full((s * 3, s * 3, img_t.shape[2]), 114, dtype=np.uint8)  # base image with 4 tiles
                 h0, w0 = h, w
                 c = s, s, s + w, s + h  # xmin, ymin, xmax, ymax (base) coordinates
             elif i == 1:  # top
@@ -503,12 +508,16 @@ class RGBTDataloader(Dataset):
             segments9.extend(segments)
 
             # Image
-            img9[y1:y2, x1:x2] = img[y1 - pady:, x1 - padx:]  # img9[ymin:ymax, xmin:xmax]
+            img_rgb9[y1:y2, x1:x2] = img_rgb[y1 - pady:, x1 - padx:]  # img9[ymin:ymax, xmin:xmax]
+            img_t9[y1:y2, x1:x2] = img_t[y1 - pady:, x1 - padx:]  # img9[ymin:ymax, xmin:xmax]
+            
             hp, wp = h, w  # height, width previous
 
         # Offset
         yc, xc = (int(random.uniform(0, s)) for _ in self.mosaic_border)  # mosaic center x, y
-        img9 = img9[yc:yc + 2 * s, xc:xc + 2 * s]
+        img_rgb9 = img_rgb9[yc:yc + 2 * s, xc:xc + 2 * s]
+        img_t9 = img_t9[yc:yc + 2 * s, xc:xc + 2 * s]
+
 
         # Concat/clip labels
         labels9 = np.concatenate(labels9, 0)
@@ -522,8 +531,8 @@ class RGBTDataloader(Dataset):
         # img9, labels9 = replicate(img9, labels9)  # replicate
 
         # Augment
-        img9, labels9, segments9 = copy_paste(img9, labels9, segments9, p=self.hyp['copy_paste'])
-        img9, labels9 = random_perspective(img9,
+        img_rgb9, img_t9, labels9, segments9 = rgbt_copy_paste(img_rgb9, img_t9, labels9, segments9, p=self.hyp['copy_paste'])
+        img_rgb9, img_t9, labels9 = rgbt_random_perspective(img_rgb9, img_t9,
                                            labels9,
                                            segments9,
                                            degrees=self.hyp['degrees'],
@@ -533,7 +542,7 @@ class RGBTDataloader(Dataset):
                                            perspective=self.hyp['perspective'],
                                            border=self.mosaic_border)  # border to remove
 
-        return img9, labels9
+        return img_rgb9, img_t9, labels9
 
     @staticmethod
     def collate_fn(batch):
@@ -546,7 +555,7 @@ class RGBTDataloader(Dataset):
     def collate_fn4(batch):
         im_rgb, im_t, label, rgb_path, t_path, shapes = zip(*batch)  # transposed
         n = len(shapes) // 4
-        im4_rgb, im4_t, label4, path4, shapes4 = [], [], [], path[:n], shapes[:n]
+        im4_rgb, im4_t, label4, rgb_path4, t_path4, shapes4 = [], [], [], rgb_path[:n], t_path[:n], shapes[:n]
 
         ho = torch.tensor([[0.0, 0, 0, 1, 0, 0]])
         wo = torch.tensor([[0.0, 0, 1, 0, 0, 0]])
@@ -572,7 +581,7 @@ class RGBTDataloader(Dataset):
         for i, lb in enumerate(label4):
             lb[:, 0] = i  # add target image index for build_targets()
 
-        return torch.stack(im4_rgb, 0), torch.stack(im4_rgb, 0), torch.cat(label4, 0), path4, shapes4
+        return torch.stack(im4_rgb, 0), torch.stack(im4_rgb, 0), torch.cat(label4, 0), rgb_path4, t_path4, shapes4
 
 class _RepeatSampler:
     """ Sampler that repeats forever

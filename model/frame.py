@@ -8,8 +8,15 @@ from model.neck import Yolov5Neck
 from model.head import Yolov5DetectHead
 from model.fuseblock import fuse_block_conv1x1
 
+class base_model(nn.Module):
+    def __init__(self) -> None:
+        super().__init__()
+        self.nc = None
+        self.names = None # class names
+        self.anchors = []
 
-class layer_fusion_1(nn.Module):
+
+class rgbt_yolov5(nn.Module):
     def __init__(self, ch, gd=1.0, gw=1.0, last_ch=1024, nc=2) -> None:
         super().__init__()
         self.gd = gd
@@ -36,7 +43,7 @@ class layer_fusion_1(nn.Module):
     
         self.neck_block = Yolov5Neck(last_ch, n=3, gd=self.gd, gw=self.gw, last_ch=last_ch)
         self.anchors=[[10,13, 16,30, 33,23], [30,61, 62,45, 59,119], [116,90, 156,198, 373,326]]
-        self.detect_block = Yolov5DetectHead(nc,self.anchors,ch=[int(last_ch/4*self.gw), int(last_ch/2*self.gw), int(last_ch*self.gw)],training=False)
+        self.detect_block = Yolov5DetectHead(nc, self.anchors, ch=[int(last_ch/4*self.gw), int(last_ch/2*self.gw), int(last_ch*self.gw)], training=False)
 
     def gw_div(self, x):
         divisor = 8 
@@ -70,7 +77,7 @@ class layer_fusion_1(nn.Module):
 
 
 
-class layer_fusion_2(nn.Module):
+class rgbt_yolov5_2(nn.Module):
     def __init__(self, ch, gd=1.0, gw=1.0) -> None:
         super().__init__()
     
@@ -83,7 +90,7 @@ class layer_fusion_2(nn.Module):
         return
 
 
-RGBTModel = layer_fusion_1
+RGBTModel = rgbt_yolov5
 
     
 

@@ -48,7 +48,9 @@ from utils.anchor import check_anchors
 from utils.callbacks import Callbacks
 from dataset.rgbt_dataset import create_rgbtdataloader
 # from utils.downloads import attempt_download, is_url
-from utils.general import *
+from utils.general import LOGGER, LOCAL_RANK, TQDM_BAR_FORMAT, colorstr, yaml_save, init_seeds, check_dataset, \
+    check_suffix, check_yaml, check_file, check_img_size, intersect_dicts, one_cycle, labels_to_class_weights, \
+    labels_to_image_weights, plot_images, plot_evolve, print_mutation, strip_optimizer, print_args, increment_path, get_latest_run
 from utils.autobatch import autobatch, check_train_batch_size
 
 
