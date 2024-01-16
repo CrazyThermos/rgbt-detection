@@ -312,28 +312,31 @@ class RGBTDataloader(Dataset):
         if nl:
             labels[:, 1:5] = xyxy2xywhn(labels[:, 1:5], w=img_t.shape[1], h=img_t.shape[0], clip=True, eps=1E-3)
 
-        if self.augment:
-            pass            
-            # # Albumentations
-            # img, labels = self.albumentations(img, labels)
-            # nl = len(labels)  # update after albumentations
+        if self.augment:         
+            # Albumentations
+            img_rgb, img_t, labels = self.albumentations(img_rgb, img_t, labels)
+            
+            nl = len(labels)  # update after albumentations
 
-            # # HSV color-space
-            # augment_hsv(img, hgain=hyp['hsv_h'], sgain=hyp['hsv_s'], vgain=hyp['hsv_v'])
+            # HSV color-space
+            augment_hsv(img_rgb, hgain=hyp['hsv_h'], sgain=hyp['hsv_s'], vgain=hyp['hsv_v'])
+            augment_hsv(img_t, hgain=hyp['hsv_h'], sgain=hyp['hsv_s'], vgain=hyp['hsv_v'])
 
-            # # Flip up-down
-            # if random.random() < hyp['flipud']:
-            #     img = np.flipud(img)
-            #     if nl:
-            #         labels[:, 2] = 1 - labels[:, 2]
+            # Flip up-down
+            if random.random() < hyp['flipud']:
+                img_rgb = np.flipud(img_rgb)
+                img_t = np.flipud(img_t)
+                if nl:
+                    labels[:, 2] = 1 - labels[:, 2]
 
-            # # Flip left-right
-            # if random.random() < hyp['fliplr']:
-            #     img = np.fliplr(img)
-            #     if nl:
-            #         labels[:, 1] = 1 - labels[:, 1]
+            # Flip left-right
+            if random.random() < hyp['fliplr']:
+                img_rgb = np.fliplr(img_rgb)
+                img_t = np.fliplr(img_t)
+                if nl:
+                    labels[:, 1] = 1 - labels[:, 1]
 
-            # Cutouts
+            # # Cutouts
             # labels = cutout(img, labels, p=0.5)
             # nl = len(labels)  # update after cutout
 

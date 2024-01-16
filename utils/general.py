@@ -824,11 +824,12 @@ class Albumentations:
         except Exception as e:
             LOGGER.info(f'{prefix}{e}')
 
-    def __call__(self, im, labels, p=1.0):
+    def __call__(self, im_rgb, im_t, labels, p=1.0):
         if self.transform and random.random() < p:
-            new = self.transform(image=im, bboxes=labels[:, 1:], class_labels=labels[:, 0])  # transformed
-            im, labels = new['image'], np.array([[c, *b] for c, b in zip(new['class_labels'], new['bboxes'])])
-        return im, labels
+            new_rgb = self.transform(image=im_rgb, bboxes=labels[:, 1:], class_labels=labels[:, 0])  # transformed
+            new_t = self.transform(image=im_t, bboxes=labels[:, 1:], class_labels=labels[:, 0])  # transformed
+            im_rgb, im_t, labels = new_rgb['image'], new_t['image'], np.array([[c, *b] for c, b in zip(new_t['class_labels'], new_t['bboxes'])])
+        return im_rgb, im_t, labels
 
 def augment_hsv(im, hgain=0.5, sgain=0.5, vgain=0.5):
     # HSV color-space augmentation

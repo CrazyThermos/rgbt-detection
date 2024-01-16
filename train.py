@@ -425,7 +425,7 @@ def train(hyp, opt, device, callbacks):  # hyp is path/to/hyp.yaml or hyp dictio
                         data_dict,
                         batch_size=batch_size // WORLD_SIZE * 2,
                         imgsz=imgsz,
-                        model=attempt_load(RGBTModel(ch=3, nc=nc, gd=0.33, gw=0.5), f, device).half(), # attempt_load(f, device).half(),
+                        model=attempt_load(model, f, device).half(), # attempt_load(f, device).half(),
                         iou_thres=0.65 if is_coco else 0.60,  # best pycocotools at iou 0.65
                         single_cls=single_cls,
                         dataloader=val_loader,
