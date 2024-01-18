@@ -1,4 +1,4 @@
-from model.frame import layer_fusion_1
+from model.frame import RGBTModel
 from model.neck import Yolov5Neck
 from PIL import Image
 from matplotlib import pyplot as plt
@@ -10,7 +10,8 @@ import pandas as pd
 import matplotlib
 from dataset.rgbt_dataset import create_rgbtdataloader
 from utils.general import LOCAL_RANK
-
+import os
+os.environ['CUDA_VISIBLE_DEVICES']='1'
 def create_model():
     pass
 
@@ -153,6 +154,7 @@ if __name__ == "__main__":
     from utils.loss import ComputeLoss 
     from utils.callbacks import Callbacks
     from utils.general import check_dataset
+
     nc=1
     imgsz=1280
     nl=3
@@ -162,22 +164,24 @@ if __name__ == "__main__":
     hyp['box'] *= 3 / nl  # scale to layers
     hyp['cls'] *= nc / 80 * 3 / nl  # scale to classes and layers
     hyp['obj'] *= (imgsz / 640) ** 2 * 3 / nl  # scale to image size and layers
-    backendmodel = layer_fusion_1(3, nc=1, gd=0.33,gw=0.5).to(device='cuda:0')
+    backendmodel = RGBTModel(3, nc=1, gd=0.33,gw=0.5).to(device='cuda')
     backendmodel.names = ['person']
     backendmodel.hyp = hyp
     data_dict = check_dataset('dataset/test.yaml') 
     callbacks = Callbacks()
     results, _, _ = validate.run(data_dict,
                                  backendmodel=backendmodel,
-                                weights='/home/cv/Project1/yuhang/RGBT-Detection/runs/train/rgbt55/weights/best.pt',
-                                batch_size=2,
+                                weights='/home/cv/Project1/yuhang/RGBT-Detection/runs/train/rgbt_yolov5s_llvip/weights/best.pt',
+                                batch_size=1,
                                 imgsz=1280,
                                 model=None, # attempt_load(f, device).half(),
                                 iou_thres=0.60,  # best pycocotools at iou 0.65
-                                single_cls=False,
+                                single_cls=True,
                                 dataloader=val_loader,
                                 save_dir='./output/backend',
                                 save_json=False,
+                                save_txt=True,
+                                save_conf=True,
                                 verbose=True,
                                 plots=True,
                                 callbacks=callbacks,

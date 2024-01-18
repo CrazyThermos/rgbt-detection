@@ -330,6 +330,8 @@ class RGBTDetectMultiBackend(nn.Module):
 
         if pt:  # PyTorch
             # weights = torch.load(weights)
+            if isinstance(weights, list):
+                weights = weights[0]
             ckpt = torch.load(weights, map_location='cpu') 
             csd = ckpt['model'].float().state_dict()
             csd = intersect_dicts(csd, backendmodel.state_dict(), exclude=[])
@@ -360,7 +362,7 @@ class RGBTDetectMultiBackend(nn.Module):
             im_t = im_t.permute(0, 2, 3, 1)  # torch BCHW to numpy BHWC shape(1,320,192,3)
 
         if self.pt:  # PyTorch
-            y = self.model(im_rgb,im_t, augment=augment, visualize=visualize) if augment or visualize else self.model(im_rgb, im_t)
+            y = self.model(im_rgb, im_t)
 
         if isinstance(y, (list, tuple)):
             return self.from_numpy(y[0]) if len(y) == 1 else [self.from_numpy(x) for x in y]

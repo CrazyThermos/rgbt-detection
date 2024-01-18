@@ -1,0 +1,2 @@
+export CUDA_VISIBLE_DEVICES=1
+python detect.py --weights '/home/cv/Project1/yuhang/RGBT-Detection/runs/train/rgbt_yolov5s_llvip_693/weights/best.pt' --conf-thres 0.1 --data 'dataset/test.yaml' --imgsz 1280  --device 1 --source '/home/cv/Project1/yuhang/datasets/TEST/images/val'

@@ -13,9 +13,126 @@ from tqdm import tqdm
 from itertools import repeat
 from multiprocessing.pool import Pool, ThreadPool
 from pathlib import Path
-from utils.general import LOCAL_RANK, LOGGER, TQDM_BAR_FORMAT, NUM_THREADS, RANK, PIN_MEMORY, RGBTAlbumentations, img2label_paths, get_hash, \
+from utils.general import IMG_FORMATS, VID_FORMATS, LOCAL_RANK, LOGGER, TQDM_BAR_FORMAT, NUM_THREADS, RANK, PIN_MEMORY, RGBTAlbumentations, img2label_paths, get_hash, \
     seed_worker, verify_image_label, rgbt_copy_paste, rgbt_mixup, rgbt_random_perspective, letterbox, xywhn2xyxy, \
     xyxy2xywhn, augment_hsv, xyn2xy, torch_distributed_zero_first
+
+class LoadRGBTImages:
+    # YOLOv5 image/video dataloader, i.e. `python detect.py --source image.jpg/vid.mp4`
+    def __init__(self, path, img_size=640, stride=32, auto=True, transforms=None, vid_stride=1):
+        if isinstance(path, str) and Path(path).suffix == '.txt':  # *.txt file with img/vid/dir on each line
+            path = Path(path).read_text().rsplit()
+        files = []
+        for p in sorted(path) if isinstance(path, (list, tuple)) else [path]:
+            p = str(Path(p).resolve())
+            if '*' in p:
+                files.extend(sorted(glob.glob(p, recursive=True)))  # glob
+            elif os.path.isdir(p):
+                files.extend(sorted(glob.glob(os.path.join(p, '*.*'))))  # dir
+            elif os.path.isfile(p):
+                files.append(p)  # files
+            else:
+                raise FileNotFoundError(f'{p} does not exist')
+
+        images = [x for x in files if x.split('.')[-1].lower() in IMG_FORMATS]
+        self.rgb_files = sorted(x for x in images if '_rgb' in x.split('.')[0])
+        self.t_files = sorted(x for x in images if '_t' in x.split('.')[0])
+
+        videos = [x for x in files if x.split('.')[-1].lower() in VID_FORMATS]
+        ni, nv = len(images)//2, len(videos)
+
+        self.img_size = img_size
+        self.stride = stride
+        self.files = images + videos
+        self.nf = ni + nv  # number of files
+        self.video_flag = [False] * ni + [True] * nv
+        self.mode = 'image'
+        self.auto = auto
+        self.transforms = transforms  # optional
+        self.vid_stride = vid_stride  # video frame-rate stride
+        if any(videos):
+            self._new_video(videos[0])  # new video
+        else:
+            self.cap = None
+        assert self.nf > 0, f'No images or videos found in {p}. ' \
+                            f'Supported formats are:\nimages: {IMG_FORMATS}\nvideos: {VID_FORMATS}'
+
+    def __iter__(self):
+        self.count = 0
+        return self
+
+    def __next__(self):
+        if self.count == self.nf:
+            raise StopIteration
+        rgb_path = self.rgb_files[self.count]
+        t_path = self.t_files[self.count]
+
+
+        if self.video_flag[self.count]:
+            # Read video
+            self.mode = 'video'
+            for _ in range(self.vid_stride):
+                self.cap.grab()
+            ret_val, im0 = self.cap.retrieve()
+            while not ret_val:
+                self.count += 1
+                self.cap.release()
+                if self.count == self.nf:  # last video
+                    raise StopIteration
+                path = self.files[self.count]
+                self._new_video(path)
+                ret_val, im0 = self.cap.read()
+
+            self.frame += 1
+            # im0 = self._cv2_rotate(im0)  # for use if cv2 autorotation is False
+            s = f'video {self.count + 1}/{self.nf} ({self.frame}/{self.frames}) {path}: '
+
+        else:
+            # Read image
+            self.count += 1
+            im_rgb0 = cv2.imread(rgb_path)  # BGR
+            im_t0 = cv2.imread(t_path)  # BGR
+            assert im_rgb0 is not None, f'Image Not Found {rgb_path}'
+            assert im_t0 is not None, f'Image Not Found {t_path}'
+
+            s = f'image {self.count}/{self.nf} {t_path}: '
+
+        if self.transforms:
+            im_rgb = self.transforms(im_rgb0)  # transforms
+            im_t = self.transforms(im_t0)  # transforms
+        else:
+            im_rgb = letterbox(im_rgb0, self.img_size, stride=self.stride, auto=self.auto)[0]  # padded resize
+            im_rgb = im_rgb.transpose((2, 0, 1))[::-1]  # HWC to CHW, BGR to RGB
+            im_rgb = np.ascontiguousarray(im_rgb)  # contiguous
+            
+            im_t = letterbox(im_t0, self.img_size, stride=self.stride, auto=self.auto)[0]  # padded resize
+            im_t = im_t.transpose((2, 0, 1))[::-1]  # HWC to CHW, BGR to RGB
+            im_t = np.ascontiguousarray(im_t)  # contiguous
+
+        return rgb_path, t_path, im_rgb, im_t, im_rgb0, im_t0, self.cap, s
+
+    def _new_video(self, path):
+        # Create a new video capture object
+        self.frame = 0
+        self.cap = cv2.VideoCapture(path)
+        self.frames = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT) / self.vid_stride)
+        self.orientation = int(self.cap.get(cv2.CAP_PROP_ORIENTATION_META))  # rotation degrees
+        # self.cap.set(cv2.CAP_PROP_ORIENTATION_AUTO, 0)  # disable https://github.com/ultralytics/yolov5/issues/8493
+
+    def _cv2_rotate(self, im):
+        # Rotate a cv2 video manually
+        if self.orientation == 0:
+            return cv2.rotate(im, cv2.ROTATE_90_CLOCKWISE)
+        elif self.orientation == 180:
+            return cv2.rotate(im, cv2.ROTATE_90_COUNTERCLOCKWISE)
+        elif self.orientation == 90:
+            return cv2.rotate(im, cv2.ROTATE_180)
+        return im
+
+    def __len__(self):
+        return self.nf  # number of files
+
+
 
 class RGBTDataloader(Dataset):
     # RGB-T train_loader/val_loader, loads images and labels for training and validation
