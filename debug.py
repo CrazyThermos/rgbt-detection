@@ -171,7 +171,7 @@ if __name__ == "__main__":
     callbacks = Callbacks()
     results, _, _ = validate.run(data_dict,
                                  backendmodel=backendmodel,
-                                weights='/home/cv/Project1/yuhang/RGBT-Detection/runs/train/rgbt_yolov5s_llvip/weights/best.pt',
+                                weights='/home/cv/Project1/yuhang/RGBT-Detection/runs/train/rgbt_yolov5s_llvip_693/weights/best.pt',
                                 batch_size=1,
                                 imgsz=1280,
                                 model=None, # attempt_load(f, device).half(),

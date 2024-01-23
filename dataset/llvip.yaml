@@ -15,3 +15,4 @@ val: /home/cv/Project1/yuhang/datasets/LLVIP_yolo/images/val  # val images (rela
 # Classes
 names:
   0: person
+  1: nothing

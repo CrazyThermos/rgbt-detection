@@ -79,7 +79,7 @@ def run(
         hide_conf=False,  # hide confidences
         half=False,  # use FP16 half-precision inference
         dnn=False,  # use OpenCV DNN for ONNX inference
-        vid_stride=1,  # video frame-rate stride
+        vid_stride=1,  # video frame-rate stride    
 ):
     source = str(source)
     save_img = not nosave and not source.endswith('.txt')  # save inference images
@@ -97,7 +97,7 @@ def run(
     # Load model
 
     device = select_device(device)
-    backendmodel = RGBTModel(3, nc=1, gd=0.33,gw=0.5).to(device=device)
+    backendmodel = RGBTModel(3, nc=1, gd=0.33, gw=0.5, training=False).to(device=device)
     backendmodel.names = ['person'] 
     model = RGBTDetectMultiBackend(backendmodel, weights, device=device, dnn=dnn, data=data, fp16=half)
     stride, names, pt = model.stride, model.names, model.pt
@@ -137,7 +137,7 @@ def run(
         # with dt[1]:
         visualize = increment_path(save_dir / Path(t_path).stem, mkdir=True) if visualize else False
         pred = model(im_rgb, im_t, augment=augment, visualize=visualize)
-
+        
         # NMS
         # with dt[2]:
         pred = non_max_suppression(pred, conf_thres, iou_thres, classes, agnostic_nms, max_det=max_det)

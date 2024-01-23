@@ -17,7 +17,7 @@ class base_model(nn.Module):
 
 
 class rgbt_yolov5(nn.Module):
-    def __init__(self, ch, gd=1.0, gw=1.0, last_ch=1024, nc=2, training=True) -> None:
+    def __init__(self, ch, gd=1.0, gw=1.0, last_ch=1024, nc=2, training=False) -> None:
         super().__init__()
         self.gd = gd
         self.gw = gw
