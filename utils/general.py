@@ -762,7 +762,8 @@ def non_max_suppression(
             continue
 
         # Compute conf
-        if nc == 1 :
+        if nc == 1 : # yuhang reference to yolov7 : for models with one class, cls_loss is 0 and cls_conf is always 0.5,
+                                 # so there is no need to multiplicate.
             x[:, 5:] = x[:, 4:5]
         else :
             x[:, 5:] *= x[:, 4:5]  # conf = obj_conf * cls_conf

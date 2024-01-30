@@ -1,3 +1,5 @@
+*.json
+*.onnx
 outputs/
 runs/
 debug.py
