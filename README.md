@@ -4,18 +4,21 @@
 * 支持单阶段模型 √
 * 支持双阶段模型 x
 * 支持anchor base √
-* anchor free
+* anchor free x
 * 支持rgb-t双模态的目标检测 √
+* 支持rgb-t模型的剪枝 √
+* 支持rgb-t模型的量化 x
+
 ## 使用方法
 在 frame.py backbone.py fuseblock.py neck.py head.py中定义你的模型
 
-backbone.py 中定义主干网络，使用预训练主干可省略
+在 backbone.py 中定义主干网络，使用预训练主干可省略
 
-fuseblock.py 中定义融合模块
+在 fuseblock.py 中定义融合模块
 
-neck.py和head.py中定义neck和head层
+在 neck.py和head.py中定义neck和head层
 
-在frame.py中实现整个网络
+在 frame.py中整个网络
 
 训练命令如下
 ```
