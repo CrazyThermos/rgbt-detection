@@ -27,10 +27,12 @@ from model.frame import RGBTModel
 BATCHSIZE   = 1
 INPUT_SHAPE = [BATCHSIZE, 3, 1280, 1280]
 DEVICE      = 'cuda'
-PLATFORM    = TargetPlatform.PPL_CUDA_INT8
+QUANT_PLATFORM    = TargetPlatform.ONNXRUNTIME
+DEPLOY_PLATFORM    = TargetPlatform.ONNXRUNTIME
+
 EXPORT_DIRECTORY = './'
-DATASET_DIRECTORY = '/home/cv/Project1/yuhang/datasets/LLVIP_yolo/images/val'
-ONNX_PATH = '/home/cv/Project1/yuhang/RGBT-Detection/rgbt_yolov5_op11.onnx'
+DATASET_DIRECTORY = '/home/zhengyuhang/datasets/LLVIP_yolo/images/val'
+ONNX_PATH = './rgbt_yolov5_op13.onnx'
 CALIBRATION_COUNT = 128
 
 
@@ -91,7 +93,7 @@ quant_setting.lsq_optimization                            = True
 quant_setting.lsq_optimization_setting.block_size         = 4
 quant_setting.lsq_optimization_setting.lr                 = 1e-5
 quant_setting.lsq_optimization_setting.gamma              = 0
-quant_setting.lsq_optimization_setting.is_scale_trainable = True
+quant_setting.lsq_optimization_setting.is_scale_trainable = False
 quant_setting.lsq_optimization_setting.collecting_device  = 'cuda'
 
 # ------------------------------------------------------------
@@ -106,7 +108,7 @@ with ENABLE_CUDA_KERNEL():
     quantized = quantize_onnx_model(
         onnx_import_file=ONNX_PATH, calib_dataloader=calibration_dataloader,
         calib_steps=32, input_shape=None, inputs=[dummy_input,dummy_input],
-        setting=quant_setting, collate_fn=collate_fn, platform=PLATFORM,
+        setting=quant_setting, collate_fn=collate_fn, platform=QUANT_PLATFORM,
         device=DEVICE, verbose=0)
     
     # ------------------------------------------------------------
@@ -123,6 +125,6 @@ with ENABLE_CUDA_KERNEL():
 
     print('网络量化结束，正在生成目标文件:')
     export_ppq_graph(
-        graph=quantized, platform=PLATFORM,
+        graph=quantized, platform=DEPLOY_PLATFORM,
         graph_save_to = os.path.join(EXPORT_DIRECTORY, 'quantized.onnx'),
         config_save_to = os.path.join(EXPORT_DIRECTORY, 'quant_cfg.json'))

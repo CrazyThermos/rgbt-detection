@@ -13,12 +13,12 @@ from utils.general import LOCAL_RANK
 from model.common import attempt_load
 import os
 
-DEVICE = 'cuda'
+DEVICE = 'cpu'
 dummy_input = torch.randn(1,3,1280,1280).to(device=DEVICE)
 input_names=['input0','input1']
 output_names=['output0']
-weights='/home/cv/Project1/yuhang/RGBT-Detection/runs/train/rgbt_yolov5s_llvip_693/weights/best.pt'
+weights='/home/zhengyuhang/multimodal-object-detection/RGBT-Detection/runs/best.pt'
 
 model = RGBTModel(3, nc=1, gd=0.33,gw=0.5).eval()
 backendmodel = attempt_load(model, weights, DEVICE)
-torch.onnx.export(backendmodel, (dummy_input, dummy_input),'rgbt_yolov5_op11.onnx', do_constant_folding=False, opset_version=11, verbose=True,input_names=input_names, output_names=output_names)
+torch.onnx.export(backendmodel, (dummy_input, dummy_input),'rgbt_yolov5_op13_constant.onnx', do_constant_folding=True, opset_version=13, verbose=True,input_names=input_names, output_names=output_names)
