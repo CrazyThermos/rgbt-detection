@@ -784,5 +784,6 @@ def create_rgbtdataloader(path,
                   pin_memory=PIN_MEMORY,
                   collate_fn=RGBTDataloader.collate_fn4 if quad else RGBTDataloader.collate_fn,
                   worker_init_fn=seed_worker,
-                  generator=generator), dataset
+                  generator=generator,
+                  drop_last=True), dataset # BatchNorm requires that the number of batches is greater than 1, and drop_last enabled prevents the batch from being 1
 
