@@ -7,7 +7,7 @@
 * anchor free x
 * 支持rgb-t双模态的目标检测 √
 * 支持rgb-t模型的剪枝 √
-* 支持rgb-t模型的量化 x
+* 支持rgb-t模型的量化 √
 
 ## 使用方法
 在 frame.py backbone.py fuseblock.py neck.py head.py中定义你的模型
