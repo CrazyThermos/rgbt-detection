@@ -76,7 +76,7 @@ if __name__ == "__main__":
     # plt.imsave("feature_t1024.png", feature_t1024[layer[4]][0].transpose(0,1).sum(1).detach().numpy())
 
 
-    # fusion = layer_fusion_1(3)
+    # fusion = RGBTModel(3)
     # output = fusion(rgb, t)#[0].transpose(0,1).sum(1).detach().numpy()
     # print(output[0][0][0][0])
     # print(output[0][0][0][1])
