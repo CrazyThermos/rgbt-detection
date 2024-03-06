@@ -29,6 +29,7 @@ class fuse_block_AFF(nn.Module):
         super().__init__()
         in_ch = ch//r
 
+        self.conv1x1 = nn.Conv2d(ch * 2, ch,(1,1))
         self.local_att = nn.Sequential(
             nn.Conv2d(ch, in_ch, kernel_size=1, stride=1, padding=0),
             nn.BatchNorm2d(in_ch),
@@ -51,9 +52,53 @@ class fuse_block_AFF(nn.Module):
 
     def forward(self, rgb, t):
         f_a = rgb + t
+        # c = torch.cat((rgb, t), 1)
+        # f_a = self.conv1x1(c)
+
         f_local = self.local_att(f_a)
         f_global = self.global_att(f_a)
         f_lg = f_local + f_global
         weight = self.sigmoid(f_lg)
         out = 2*(rgb*weight + t*(1-weight))
+        return out
+
+class fuse_block_CA(nn.Module):
+    def __init__(self, ch, reduction=16):
+        super(fuse_block_CA, self).__init__()
+
+        # self.h = h
+        # self.w = w
+        self.conv1x1 = nn.Conv2d(ch * 2, ch,(1,1))
+        self.avg_pool_x = nn.AdaptiveAvgPool2d((None, 1))
+        self.avg_pool_y = nn.AdaptiveAvgPool2d((1, None))
+
+        self.conv_1x1 = nn.Conv2d(in_channels=ch, out_channels=ch//reduction, kernel_size=1, stride=1, bias=False)
+
+        self.relu = nn.ReLU()
+        self.bn = nn.BatchNorm2d(ch//reduction)
+
+        self.F_h = nn.Conv2d(in_channels=ch//reduction, out_channels=ch, kernel_size=1, stride=1, bias=False)
+        self.F_w = nn.Conv2d(in_channels=ch//reduction, out_channels=ch, kernel_size=1, stride=1, bias=False)
+
+        self.sigmoid_h = nn.Sigmoid()
+        self.sigmoid_w = nn.Sigmoid()
+
+    def forward(self, rgb, t):
+        
+        x = rgb + t
+        # c = torch.cat((rgb, t), 1)
+        # x = self.conv1x1(c)
+        _, _, h, w = x.size() 
+        x_h = self.avg_pool_x(x).permute(0, 1, 3, 2)
+        x_w = self.avg_pool_y(x)
+
+        x_cat_conv_relu = self.relu(self.conv_1x1(torch.cat((x_h, x_w), 3)))
+
+        x_cat_conv_split_h, x_cat_conv_split_w = x_cat_conv_relu.split([h, w], 3)
+
+        s_h = self.sigmoid_h(self.F_h(x_cat_conv_split_h.permute(0, 1, 3, 2)))
+        s_w = self.sigmoid_w(self.F_w(x_cat_conv_split_w))
+
+        out = x * s_h.expand_as(x) * s_w.expand_as(x)
+
         return out

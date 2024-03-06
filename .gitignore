@@ -1,5 +1,6 @@
 *.json
 *.onnx
+test_imgs/
 outputs/
 runs/
 debug.py

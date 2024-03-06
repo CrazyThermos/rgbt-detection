@@ -313,6 +313,7 @@ def train(hyp, opt, device, callbacks):  # hyp is path/to/hyp.yaml or hyp dictio
                     img_t = nn.functional.interpolate(img_t, size=ns, mode='bilinear', align_corners=False)
 
             # Forward
+            torch.use_deterministic_algorithms(True, warn_only=True)
             with torch.cuda.amp.autocast(amp):
                 pred = model(img_rgb, img_t)  # forward
                 loss, loss_items = compute_loss(pred, targets.to(device))  # loss scaled by batch_size

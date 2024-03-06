@@ -945,6 +945,7 @@ def save_one_box(xyxy, im, file=Path('im.jpg'), gain=1.02, pad=10, square=False,
         Image.fromarray(crop[..., ::-1]).save(f, quality=95, subsampling=0)  # save RGB
     return crop
 
+
 class Annotator:
     # YOLOv5 Annotator for train/val mosaics and jpgs and detect/hub inference annotations
     def __init__(self, im, line_width=None, font_size=None, font='Arial.ttf', pil=False, example='abc'):
@@ -991,6 +992,7 @@ class Annotator:
                             txt_color,
                             thickness=tf,
                             lineType=cv2.LINE_AA)
+
 
     def masks(self, masks, colors, im_gpu, alpha=0.5, retina_masks=False):
         """Plot masks at once.
@@ -1041,6 +1043,235 @@ class Annotator:
     def result(self):
         # Return annotated image as array
         return np.asarray(self.im)
+
+
+class RgbtAnnotator:
+    # RgbtAnnotator detect/hub inference annotations
+    def __init__(self, im_rgb, im_t, line_width=None, font_size=None, font='Arial.ttf', pil=False, example='abc'):
+        assert im_rgb.data.contiguous, 'Image not contiguous. Apply np.ascontiguousarray(im) to Annotator() input images.'
+        assert im_t.data.contiguous, 'Image not contiguous. Apply np.ascontiguousarray(im) to Annotator() input images.'
+
+        # non_ascii = not is_ascii(example)  # non-latin labels, i.e. asian, arabic, cyrillic
+        self.pil = pil # or non_ascii
+        if self.pil:  # use PIL
+            self.im_rgb = im_rgb if isinstance(im_rgb, Image.Image) else Image.fromarray(im_rgb)
+            self.draw_rgb = ImageDraw.Draw(self.im_rgb)
+            self.im_t = im_t if isinstance(im_t, Image.Image) else Image.fromarray(im_t)
+            self.draw_t = ImageDraw.Draw(self.im_t)
+            self.font = ImageFont.load_default() #check_pil_font(font='Arial.Unicode.ttf' if non_ascii else font,
+            #                            size=font_size or max(round(sum(self.im.size) / 2 * 0.035), 12))
+        else:  # use cv2
+            self.im_rgb = im_rgb
+            self.im_t = im_t
+
+        self.lw = line_width or max(round(sum(im_rgb.shape) / 2 * 0.003), 2)  # line width
+
+    def box_label(self, box, label='', color=(128, 128, 128), txt_color=(255, 255, 255)):
+        # Add one xyxy box to image with label
+        if self.pil : # or not is_ascii(label):
+            self.draw.rectangle(box, width=self.lw, outline=color)  # box
+            if label:
+                w, h = self.font.getsize(label)  # text width, height (WARNING: deprecated) in 9.2.0
+                # _, _, w, h = self.font.getbbox(label)  # text width, height (New)
+                outside = box[1] - h >= 0  # label fits outside box
+                self.draw.rectangle(
+                    (box[0], box[1] - h if outside else box[1], box[0] + w + 1,
+                     box[1] + 1 if outside else box[1] + h + 1),
+                    fill=color,
+                )
+                # self.draw.text((box[0], box[1]), label, fill=txt_color, font=self.font, anchor='ls')  # for PIL>8.0
+                self.draw_rgb.text((box[0], box[1] - h if outside else box[1]), label, fill=txt_color, font=self.font)
+                self.draw_t.text((box[0], box[1] - h if outside else box[1]), label, fill=txt_color, font=self.font)
+
+        else:  # cv2
+            p1, p2 = (int(box[0]), int(box[1])), (int(box[2]), int(box[3]))
+            cv2.rectangle(self.im_rgb, p1, p2, color, thickness=self.lw, lineType=cv2.LINE_AA)
+            cv2.rectangle(self.im_t, p1, p2, color, thickness=self.lw, lineType=cv2.LINE_AA)
+
+            if label:
+                tf = max(self.lw - 1, 1)  # font thickness
+                w, h = cv2.getTextSize(label, 0, fontScale=self.lw / 3, thickness=tf)[0]  # text width, height
+                outside = p1[1] - h >= 3
+                p2 = p1[0] + w, p1[1] - h - 3 if outside else p1[1] + h + 3
+                cv2.rectangle(self.im_rgb, p1, p2, color, -1, cv2.LINE_AA)  # filled
+                cv2.rectangle(self.im_t, p1, p2, color, -1, cv2.LINE_AA)  # filled
+
+                cv2.putText(self.im_rgb,
+                            label, (p1[0], p1[1] - 2 if outside else p1[1] + h + 2),
+                            0,
+                            self.lw / 3,
+                            txt_color,
+                            thickness=tf,
+                            lineType=cv2.LINE_AA)
+                cv2.putText(self.im_t,
+                            label, (p1[0], p1[1] - 2 if outside else p1[1] + h + 2),
+                            0,
+                            self.lw / 3,
+                            txt_color,
+                            thickness=tf,
+                            lineType=cv2.LINE_AA)
+                
+    def outer_contours(self, img):
+        contours, hier = cv2.findContours(img, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE)
+        return [contours[i] for i in range(len(hier[0])) if hier[0][i][3]==-1]
+    
+    def outer_contours_max(self, img):
+        # Binarization
+        ret, binary = cv2.threshold(img, 0, 127, cv2.THRESH_BINARY | cv2.THRESH_OTSU)
+        # Morphological Transformation
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
+        close_img = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel, iterations=2)
+        # Find the external contours
+        contours, hierarchy = cv2.findContours(close_img , cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        # Find the largest contour
+        area = []
+        for k in range(len(contours)):
+            area.append(cv2.contourArea(contours[k]))
+        max_idx = np.argmax(np.array(area))
+        return (contours,max_idx)
+
+    def outline_edge_in_rgb(self, box, blur_kernel = (5, 5), method = 'Canny'):
+        '''
+        Infrared edge detection, Canny method recommended
+        '''
+        gray_im = cv2.cvtColor(self.im_t, cv2.COLOR_BGR2GRAY)
+        gray_im = gray_im[int(box[1]):int(box[3]), int(box[0]):int(box[2])]
+        blurred = cv2.GaussianBlur(gray_im, blur_kernel, 0)
+        # blurred = gray_im
+
+        if method == 'Roberts':
+            kernelx = np.array([[-1, 0], [0, 1]], dtype=int)
+            kernely = np.array([[0, -1], [1, 0]], dtype=int)
+
+            x = cv2.filter2D(blurred, cv2.CV_16S, kernelx)
+            y = cv2.filter2D(blurred, cv2.CV_16S, kernely)
+
+            absX = cv2.convertScaleAbs(x)
+            absY = cv2.convertScaleAbs(y)
+            Roberts = cv2.addWeighted(absX, 0.5, absY, 0.5, 0)
+
+            kernel = np.ones((2, 2), np.uint8)
+            edge = cv2.morphologyEx(Roberts, cv2.MORPH_DILATE, kernel)
+
+
+            edge = cv2.normalize(edge, None, 0, 255, cv2.NORM_MINMAX)
+
+        elif method == 'Prewitt':
+            kernelx = np.array([[1,1,1],[0,0,0],[-1,-1,-1]],dtype=int)
+            kernely = np.array([[-1,0,1],[-1,0,1],[-1,0,1]],dtype=int)
+
+            x = cv2.filter2D(blurred, cv2.CV_16S, kernelx)
+            y = cv2.filter2D(blurred, cv2.CV_16S, kernely)
+
+            absX = cv2.convertScaleAbs(x)
+            absY = cv2.convertScaleAbs(y)
+            Prewitt = cv2.addWeighted(absX, 0.5, absY, 0.5, 0)
+
+            edge = cv2.normalize(Prewitt, None, 0, 255, cv2.NORM_MINMAX)
+
+        elif method == 'Sobel':
+            x = cv2.Sobel(blurred, cv2.CV_16S, 1, 0)
+            y = cv2.Sobel(blurred, cv2.CV_16S, 0, 1)
+
+            absX = cv2.convertScaleAbs(x)
+            absY = cv2.convertScaleAbs(y)
+            Sobel = cv2.addWeighted(absX, 0.5, absY, 0.5, 0)
+
+            edge = cv2.normalize(Sobel, None, 0, 255, cv2.NORM_MINMAX)
+
+        elif method == 'Canny':
+            canny = cv2.Canny(blurred, 50, 130)
+
+            kernel = np.ones((3, 3), np.uint8)
+            edge = cv2.morphologyEx(canny, cv2.MORPH_DILATE, kernel)
+            edge = cv2.normalize(edge, None, 0, 180, cv2.NORM_MINMAX)
+
+
+        elif method == 'morphology':
+            kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+            edge = cv2.morphologyEx(blurred, cv2.MORPH_GRADIENT, kernel)
+
+            edge = cv2.normalize(edge, None, 0, 255, cv2.NORM_MINMAX)
+
+        elif method == "Contours":
+            edge = cv2.Canny(blurred, 0, 100)
+            contours, idx = self.outer_contours_max(edge)
+
+            cv2.drawContours(self.im_rgb[int(box[1]):int(box[3]), int(box[0]):int(box[2])],contours,idx,(200,200,200),2,cv2.LINE_AA)
+            # edge = self.im_rgb.copy()
+            # cv2.drawContours(edge,contours,idx,(200,200,200),2)  
+            # self.im_rgb[int(box[1]):int(box[3]), int(box[0]):int(box[2])] = edge[int(box[1]):int(box[3]), int(box[0]):int(box[2])]
+
+        if method != "Contours":
+            zeros = np.full_like(edge, 0)
+            R = cv2.merge([edge, edge, edge])
+            self.im_rgb[int(box[1]):int(box[3]), int(box[0]):int(box[2])] = cv2.addWeighted(self.im_rgb[int(box[1]):int(box[3]), int(box[0]):int(box[2])], 1, R, 1, 0)
+    
+    def masks(self, masks, colors, im_rgb_gpu, im_t_gpu, alpha=0.5, retina_masks=False):
+        """Plot masks at once.
+        Args:
+            masks (tensor): predicted masks on cuda, shape: [n, h, w]
+            colors (List[List[Int]]): colors for predicted masks, [[r, g, b] * n]
+            im_gpu (tensor): img is in cuda, shape: [3, h, w], range: [0, 1]
+            alpha (float): mask transparency: 0.0 fully transparent, 1.0 opaque
+        """
+        if self.pil:
+            # convert to numpy first
+            self.im_rgb = np.asarray(self.im_rgb).copy()
+            self.im_t = np.asarray(self.im_t).copy()
+
+        if len(masks) == 0:
+            self.im_rgb[:] = im_rgb_gpu.permute(1, 2, 0).contiguous().cpu().numpy() * 255
+            self.im_t[:] = im_rgb_gpu.permute(1, 2, 0).contiguous().cpu().numpy() * 255
+
+        colors = torch.tensor(colors, device=im_rgb_gpu.device, dtype=torch.float32) / 255.0
+        colors = colors[:, None, None]  # shape(n,1,1,3)
+        masks = masks.unsqueeze(3)  # shape(n,h,w,1)
+        masks_color = masks * (colors * alpha)  # shape(n,h,w,3)
+
+        inv_alph_masks = (1 - masks * alpha).cumprod(0)  # shape(n,h,w,1)
+        mcs = (masks_color * inv_alph_masks).sum(0) * 2  # mask color summand shape(n,h,w,3)
+
+        im_rgb_gpu = im_rgb_gpu.flip(dims=[0])  # flip channel
+        im_rgb_gpu = im_rgb_gpu.permute(1, 2, 0).contiguous()  # shape(h,w,3)
+        im_rgb_gpu = im_rgb_gpu * inv_alph_masks[-1] + mcs
+        
+        im_t_gpu = im_t_gpu.flip(dims=[0])  # flip channel
+        im_t_gpu = im_t_gpu.permute(1, 2, 0).contiguous()  # shape(h,w,3)
+        im_t_gpu = im_t_gpu * inv_alph_masks[-1] + mcs
+        
+        im_rgb_mask = (im_rgb_gpu * 255).byte().cpu().numpy()
+        self.im_rgb[:] = im_rgb_mask if retina_masks else scale_image(im_rgb_gpu.shape, im_rgb_mask, self.im_rgb.shape)
+        im_t_mask = (im_t_gpu * 255).byte().cpu().numpy()
+        self.im_t[:] = im_t_mask if retina_masks else scale_image(im_t_gpu.shape, im_t_mask, self.im_rgb.shape)
+        if self.pil:
+            # convert im back to PIL and update draw
+            self.fromarray(self.im_rgb)
+            self.fromarray(self.im_t)
+
+    def rectangle(self, xy, fill=None, outline=None, width=1):
+        # Add rectangle to image (PIL-only)
+        self.draw_rgb.rectangle(xy, fill, outline, width)
+        self.draw_t.rectangle(xy, fill, outline, width)
+
+
+    def text(self, xy, text, txt_color=(255, 255, 255), anchor='top'):
+        # Add text to image (PIL-only)
+        if anchor == 'bottom':  # start y from font bottom
+            w, h = self.font.getsize(text)  # text width, height
+            xy[1] += 1 - h
+        self.draw_rgb.text(xy, text, fill=txt_color, font=self.font)
+        self.draw_t.text(xy, text, fill=txt_color, font=self.font)
+
+
+    def fromarray(self, im):
+        # Update self.im from a numpy array
+        self.im = im if isinstance(im, Image.Image) else Image.fromarray(im)
+        self.draw = ImageDraw.Draw(self.im)
+
+    def result(self):
+        # Return annotated image as array
+        return (np.asarray(self.im_rgb),np.asarray(self.im_t))
 
 
 def scale_image(im1_shape, masks, im0_shape, ratio_pad=None):

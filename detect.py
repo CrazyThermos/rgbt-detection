@@ -45,7 +45,7 @@ from model.frame import RGBTModel
 from model.common import RGBTDetectMultiBackend
 from dataset.rgbt_dataset import LoadRGBTImages
 # from utils.dataloaders import IMG_FORMATS, VID_FORMATS, LoadImages, LoadScreenshots, LoadStreams
-from utils.general import (LOGGER, IMG_FORMATS, VID_FORMATS, check_file, check_img_size, colorstr, cv2, Annotator, save_one_box,
+from utils.general import (LOGGER, IMG_FORMATS, VID_FORMATS, check_file, check_img_size, colorstr, cv2, Annotator, RgbtAnnotator, save_one_box,
                            increment_path, non_max_suppression, print_args, scale_boxes, strip_optimizer, xyxy2xywh)
 # from utils.plots import Annotator, colors, save_one_box
 from utils.torch_utils import select_device, smart_inference_mode
@@ -80,6 +80,7 @@ def run(
         half=False,  # use FP16 half-precision inference
         dnn=False,  # use OpenCV DNN for ONNX inference
         vid_stride=1,  # video frame-rate stride    
+        draw_edge=False
 ):
     source = str(source)
     save_img = not nosave and not source.endswith('.txt')  # save inference images
@@ -168,11 +169,10 @@ def run(
             s += '%gx%g ' % im_t.shape[2:]  # print string
             # gn_rgb = torch.tensor(im_rgb0.shape)[[1, 0, 1, 0]]  # normalization gain whwh
             imc_rgb = im_rgb0.copy() if save_crop else im_rgb0  # for save_crop
-            rgb_annotator = Annotator(im_rgb0, line_width=line_thickness, example=str(names))
             
             gn = torch.tensor(im_t0.shape)[[1, 0, 1, 0]]  # normalization gain whwh
             imc_t = im_t0.copy() if save_crop else im_t0  # for save_crop
-            t_annotator = Annotator(im_t0, line_width=line_thickness, example=str(names))
+            annotator = RgbtAnnotator(im_rgb0, im_t0,line_width=line_thickness, example=str(names))
             
             if len(det):
                 # Rescale boxes from img_size to im0 size
@@ -191,11 +191,13 @@ def run(
                         with open(f'{txt_path}.txt', 'a') as f:
                             f.write(('%g ' * len(line)).rstrip() % line + '\n')
 
-                    if save_img or save_crop or view_img:  # Add bbox to image
+                    if draw_edge:
+                        annotator.outline_edge_in_rgb(xyxy)
+
+                    if not draw_edge and (save_img or save_crop or view_img):  # Add bbox to image
                         c = int(cls)  # integer class
                         label = None if hide_labels else (names[c] if hide_conf else f'{names[c]} {conf:.2f}')
-                        rgb_annotator.box_label(xyxy, label)
-                        t_annotator.box_label(xyxy, label)
+                        annotator.box_label(xyxy, label)
 
                     if save_crop:
                         save_one_box(xyxy, imc_rgb, file=save_dir / 'crops' / names[c] / f'{p_rgb.stem}.jpg', BGR=True)
@@ -203,8 +205,9 @@ def run(
 
 
             # Stream results
-            im_rgb0 = rgb_annotator.result()
-            im_t0 = t_annotator.result()
+            # im_rgb0 = rgb_annotator.result()
+            # im_t0 = t_annotator.result()
+            im_rgb0, im_t0 = annotator.result()
 
             if view_img:
                 if platform.system() == 'Linux' and p_rgb not in windows and p_t not in windows:
@@ -285,6 +288,7 @@ def parse_opt():
     parser.add_argument('--half', action='store_true', help='use FP16 half-precision inference')
     parser.add_argument('--dnn', action='store_true', help='use OpenCV DNN for ONNX inference')
     parser.add_argument('--vid-stride', type=int, default=1, help='video frame-rate stride')
+    parser.add_argument('--draw_edge', action='store_true', help='outline the edges of each detected object.')
     opt = parser.parse_args()
     opt.imgsz *= 2 if len(opt.imgsz) == 1 else 1  # expand
     print_args(vars(opt))
