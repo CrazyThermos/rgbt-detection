@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+from model.mamba import PatchEmbed, Mamba, MambaConfig
 
 class fuse_block_conv1x1(nn.Module):
     def __init__(self, ch) -> None:
@@ -102,3 +103,23 @@ class fuse_block_CA(nn.Module):
         out = x * s_h.expand_as(x) * s_w.expand_as(x)
 
         return out
+    
+class fuse_block_Mamba(nn.Module):
+    def __init__(self, ch, img_size, patch_size, d_model=768, n_layer=8, d_state=16):
+        super(fuse_block_Mamba, self).__init__()
+        self.patchembd = PatchEmbed(img_size=img_size, patch_size=patch_size ,stride=patch_size, in_chans=ch)
+
+        config = MambaConfig(d_model=d_model, n_layers=n_layer, d_state=d_state)
+        self.mamba = Mamba(config)
+
+    def forward(self, rgb, t):
+        B, C, H, W = rgb.shape
+        assert H == W, f"Input feature size H:{H}!=W:{W}!"
+        rgb_token = self.patchembd(rgb)
+        t_token = self.patchembd(t)
+        fuse_token = torch.cat((rgb_token, t_token), 1)
+        fuse_out = self.mamba(fuse_token)
+        fuse_out = fuse_out.unsqueeze(3)
+        fuse_out = fuse_out.transpose(0, 3)
+        fuse_out = fuse_out.reshape(B*2, C, H, W)
+        return (fuse_out[:B], fuse_out[B:])
