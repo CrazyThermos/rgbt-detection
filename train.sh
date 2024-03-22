@@ -1,8 +1,8 @@
-python train.py --data dataset/llvip.yaml \
-                --hyp configs/hyp.scratch-med.yaml \
+python train.py --data dataset/m3fd.yaml \
+                --hyp configs/hyp.scratch-low.yaml \
                 --optimizer SGD \
-                --batch-size 8 \
+                --batch-size 4 \
                 --epochs 300 \
-                --img 1280 \
-                --name rgbt \
+                --img 640 \
+                --name mamba \
                 --device 1

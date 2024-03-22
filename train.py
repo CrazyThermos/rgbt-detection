@@ -50,15 +50,16 @@ from dataset.rgbt_dataset import create_rgbtdataloader
 # from utils.downloads import attempt_download, is_url
 from utils.general import LOGGER, LOCAL_RANK, TQDM_BAR_FORMAT, colorstr, yaml_save, init_seeds, check_dataset, \
     check_suffix, check_yaml, check_file, check_img_size, intersect_dicts, one_cycle, labels_to_class_weights, \
-    labels_to_image_weights, plot_images, plot_evolve, print_mutation, strip_optimizer, print_args, increment_path, get_latest_run
+    labels_to_image_weights, print_mutation, strip_optimizer, print_args, increment_path, \
+    get_latest_run, methods
 from utils.autobatch import autobatch, check_train_batch_size
-
+from utils.loggers import LOGGERS, Loggers
 
 # from utils.loggers import Loggers
 # from utils.loggers.comet.comet_utils import check_comet_resume
 from utils.loss import ComputeLoss
 from utils.metrics import fitness
-# from utils.plots import plot_evolve
+from utils.plots import plot_images, plot_evolve
 from utils.torch_utils import (EarlyStopping, ModelEMA, de_parallel, select_device, smart_DDP, smart_optimizer,
                                smart_resume, torch_distributed_zero_first)
 
@@ -92,18 +93,18 @@ def train(hyp, opt, device, callbacks):  # hyp is path/to/hyp.yaml or hyp dictio
         yaml_save(save_dir / 'opt.yaml', vars(opt))
 
     # Loggers
-    # data_dict = None
-    # if RANK in {-1, 0}:
-    #     loggers = Loggers(save_dir, weights, opt, hyp, LOGGER)  # loggers instance
+    data_dict = None
+    if RANK in {-1, 0}:
+        loggers = Loggers(save_dir, weights, opt, hyp, LOGGER)  # loggers instance
 
-    #     # Register actions
-    #     for k in methods(loggers):
-    #         callbacks.register_action(k, callback=getattr(loggers, k))
+        # Register actions
+        for k in methods(loggers):
+            callbacks.register_action(k, callback=getattr(loggers, k))
 
-    #     # Process custom dataset artifact link
-    #     data_dict = loggers.remote_dataset
-    #     if resume:  # If resuming runs from remote artifact
-    #         weights, epochs, hyp, batch_size = opt.weights, opt.epochs, opt.hyp, opt.batch_size
+        # Process custom dataset artifact link
+        data_dict = loggers.remote_dataset
+        if resume:  # If resuming runs from remote artifact
+            weights, epochs, hyp, batch_size = opt.weights, opt.epochs, opt.hyp, opt.batch_size
 
     # Config
     plots = not evolve and not opt.noplots  # create plots
@@ -342,7 +343,7 @@ def train(hyp, opt, device, callbacks):  # hyp is path/to/hyp.yaml or hyp dictio
                 mem = f'{torch.cuda.memory_reserved() / 1E9 if torch.cuda.is_available() else 0:.3g}G'  # (GB)
                 pbar.set_description(('%11s' * 2 + '%11.4g' * 5) %
                                      (f'{epoch}/{epochs - 1}', mem, *mloss, targets.shape[0], img_t.shape[-1]))
-                callbacks.run('on_train_batch_end', model, ni, img_rgb, img_t, targets, t_paths, list(mloss))
+                callbacks.run('on_train_batch_end', model, ni, img_rgb, img_t, targets, rgb_paths, t_paths, list(mloss))
                 if ni < 3:
                     rgb_f = save_dir / f'rgb_train_batch{ni}.jpg'  # filename
                     t_f = save_dir / f't_train_batch{ni}.jpg'  # filename
@@ -525,7 +526,7 @@ def main(opt, callbacks=Callbacks()):
             opt.exist_ok, opt.resume = opt.resume, False  # pass resume to exist_ok and disable resume
         # if opt.name == 'cfg':
         #     opt.name = Path(opt.cfg).stem  # use model.yaml as name
-        opt.name = 'rgbt'
+        # opt.name = 'rgbt'
         opt.save_dir = str(increment_path(Path(opt.project) / opt.name, exist_ok=opt.exist_ok))
 
     # DDP mode

@@ -3,5 +3,5 @@ python detect.py --weights '/home/zhengyuhang/multimodal-object-detection/RGBT-D
                 --data 'dataset/test.yaml' \
                 --imgsz 1280  \
                 --device 0 \
-                --source '/home/zhengyuhang/datasets/TEST/images/val' 
-                # --draw_edge
+                --source '/home/zhengyuhang/datasets/TEST/images/val' \
+                --draw_edge
