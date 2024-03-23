@@ -19,6 +19,7 @@ input_names=['input0','input1']
 output_names=['output0']
 weights='/home/zhengyuhang/multimodal-object-detection/RGBT-Detection/runs/best.pt'
 
-model = RGBTModel(3, nc=1, gd=0.33,gw=0.5).eval()
+model = RGBTModel(3, nc=1, gd=0.33,gw=0.5, training=False).eval()
+model.detect_block.export = True
 backendmodel = attempt_load(model, weights, DEVICE)
-torch.onnx.export(backendmodel, (dummy_input, dummy_input),'rgbt_yolov5_op13_constant.onnx', do_constant_folding=True, opset_version=13, verbose=True,input_names=input_names, output_names=output_names)
+torch.onnx.export(backendmodel, (dummy_input, dummy_input),'rgbt_yolov5_op13.onnx', do_constant_folding=True, opset_version=13, verbose=True,input_names=input_names, output_names=output_names)
