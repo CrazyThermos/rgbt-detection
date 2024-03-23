@@ -1,5 +1,6 @@
 *.json
 *.onnx
+*.engine
 test_imgs/*
 outputs/
 runs/
