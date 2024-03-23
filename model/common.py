@@ -2,7 +2,12 @@ import math
 import warnings
 import torch
 import torch.nn as nn
-
+from collections import OrderedDict, namedtuple
+from utils.general import (
+    LOGGER,
+    check_version,
+    yaml_load,
+)
 
 def autopad(k, p=None, d=1):  # kernel, padding, dilation
     # Pad to 'same' shape outputs
@@ -315,13 +320,13 @@ class RGBTDetectMultiBackend(nn.Module):
         
         pt = self._model_type(w)[0]
         jit = False
-        engine = False
+        engine = weights[0].split('.')[-1] == 'engine'
         onnx = False
         saved_model = False
         pb = False
         triton = False
         nhwc = False
-        fp16 &= pt  # FP16
+        fp16 &= pt or jit or onnx or engine or triton  # FP16
         # BHWC formats (vs torch BCWH)
         stride = 32  # default stride
         cuda = torch.cuda.is_available() and device.type != 'cpu'  # use CUDA
@@ -340,6 +345,38 @@ class RGBTDetectMultiBackend(nn.Module):
             names = backendmodel.module.names if hasattr(backendmodel, 'module') else backendmodel.names  # get class names
             backendmodel.half() if fp16 else backendmodel.float()
             self.model = backendmodel  # explicitly assign for to(), cpu(), cuda(), half()
+        elif engine:
+            LOGGER.info(f"Loading {w} for TensorRT inference...")
+            import tensorrt as trt  # https://developer.nvidia.com/nvidia-tensorrt-download
+
+            check_version(trt.__version__, "7.0.0", hard=True)  # require tensorrt>=7.0.0
+            if device.type == "cpu":
+                device = torch.device("cuda:0")
+            Binding = namedtuple("Binding", ("name", "dtype", "shape", "data", "ptr"))
+            logger = trt.Logger(trt.Logger.INFO)
+            with open(w, "rb") as f, trt.Runtime(logger) as runtime:
+                model = runtime.deserialize_cuda_engine(f.read())
+            context = model.create_execution_context()
+            bindings = OrderedDict()
+            output_names = []
+            fp16 = False  # default updated below
+            dynamic = False
+            for i in range(model.num_bindings):
+                name = model.get_binding_name(i)
+                dtype = trt.nptype(model.get_binding_dtype(i))
+                if model.binding_is_input(i):
+                    if -1 in tuple(model.get_binding_shape(i)):  # dynamic
+                        dynamic = True
+                        context.set_binding_shape(i, tuple(model.get_profile_shape(0, i)[2]))
+                    if dtype == np.float16:
+                        fp16 = True
+                else:  # output
+                    output_names.append(name)
+                shape = tuple(context.get_binding_shape(i))
+                im = torch.from_numpy(np.empty(shape, dtype=dtype)).to(device)
+                bindings[name] = Binding(name, dtype, shape, im, int(im.data_ptr()))
+            binding_addrs = OrderedDict((n, d.ptr) for n, d in bindings.items())
+            batch_size = bindings["input0"].shape[0]
         else:
             raise NotImplementedError(f'ERROR: {w} is not a supported format')
 
@@ -363,6 +400,23 @@ class RGBTDetectMultiBackend(nn.Module):
 
         if self.pt:  # PyTorch
             y = self.model(im_rgb, im_t)
+        elif self.engine:  # TensorRT
+            if self.dynamic and (im_rgb.shape != self.bindings["input0"].shape or im_t.shape != self.bindings["input1"].shape):
+                i = self.model.get_binding_index("input0")
+                self.context.set_binding_shape(i, im_rgb.shape)  # reshape if dynamic
+                i = self.model.get_binding_index("input1")
+                self.context.set_binding_shape(i, im_t.shape)  # reshape if dynamic
+                self.bindings["input0"] = self.bindings["input0"]._replace(shape=im_rgb.shape)
+                self.bindings["input1"] = self.bindings["input1"]._replace(shape=im_t.shape)
+                for name in self.output_names:
+                    i = self.model.get_binding_index(name)
+                    self.bindings[name].data.resize_(tuple(self.context.get_binding_shape(i)))
+            s = self.bindings["input0"].shape
+            assert im_rgb.shape == s, f"input size {im_rgb.shape} {'>' if self.dynamic else 'not equal to'} max model size {s}"
+            self.binding_addrs["input0"] = int(im_rgb.data_ptr())
+            self.binding_addrs["input1"] = int(im_t.data_ptr())
+            self.context.execute_v2(list(self.binding_addrs.values()))
+            y = [self.bindings[x].data for x in sorted(self.output_names)]
 
         if isinstance(y, (list, tuple)):
             return self.from_numpy(y[0]) if len(y) == 1 else [self.from_numpy(x) for x in y]
