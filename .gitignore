@@ -1,6 +1,7 @@
 *.json
 *.onnx
 *.engine
+*.wts
 test_imgs/*
 outputs/
 runs/
