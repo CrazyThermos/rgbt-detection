@@ -30,7 +30,7 @@ class fuse_block_AFF(nn.Module):
         super().__init__()
         in_ch = ch//r
 
-        self.conv1x1 = nn.Conv2d(ch * 2, ch,(1,1))
+        # self.conv1x1 = nn.Conv2d(ch * 2, ch,(1,1))
         self.local_att = nn.Sequential(
             nn.Conv2d(ch, in_ch, kernel_size=1, stride=1, padding=0),
             nn.BatchNorm2d(in_ch),

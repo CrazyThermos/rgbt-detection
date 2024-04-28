@@ -4,7 +4,8 @@ import torch.nn as nn
 from torchvision.transforms import transforms
 
 from model.common import C3, Conv, SPPF
-
+from model.mamba import Mamba, MambaConfig, PatchMerge, RMSNorm
+from model.vmamba import *
 # YOLOv5 v6.0 backbone
 '''
 backbone:
@@ -89,3 +90,35 @@ class yolov5_backbone_block(nn.Module):
     def forward(self, x):
         o = self.c3(self.conv(x))
         return o
+
+class mamba_backbone_block(nn.Module):
+    def __init__(self, 
+        dim,  # # 96
+        depth,  # 2
+        d_state=16,
+        mamba_drop=0.,
+        drop_path=0.,   # 每一个模块都有一个drop
+        norm_layer=nn.LayerNorm, 
+        downsample=None,  # PatchMergin2D
+    ) -> None:
+        super().__init__()
+        self.layers = nn.ModuleList([
+            VSSBlock(
+                hidden_dim=dim,   # 96
+                drop_path=drop_path[i],  # 0.2
+                norm_layer=norm_layer,  # nn.LN
+                mamba_drop_rate=mamba_drop, # 0 
+                d_state=d_state,  # 16
+            ) for i in range(depth)])
+
+        if downsample is not None:
+            self.downsample = downsample(dim=dim, norm_layer=norm_layer)
+        else:
+            self.downsample = None
+
+    def forward(self, x):
+        for layer in self.layers:
+            x = layer(x)
+        if self.downsample is not None:
+            x = self.downsample(x)            
+        return x

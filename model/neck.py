@@ -62,3 +62,46 @@ class Yolov5Neck(nn.Module):
         out2 = self.c3_3(torch.concat((conv_out2, self.conv_3(out1)), 1))
         out3 = self.c3_4(torch.concat((conv_out1, self.conv_4(out2)), 1))
         return out1, out2, out3
+
+
+class RTDETRNeck(nn.Module):
+    def __init__(self, ch, n=3, gd=1.0, gw=1.0, last_ch=1024):
+        super().__init__()
+        self.gd = gd
+        self.gw = gw
+
+        self.conv_0 = Conv(self.gw_div(ch), self.gw_div(last_ch//4), 1, 1, None, 1, 1, False) #input3
+        self.aifi = AIFI(self.gw_div(last_ch//4), cm=1024)
+        self.conv_0_act = Conv(self.gw_div(last_ch//4), self.gw_div(last_ch//4), 1, 1)
+
+        self.upsample_1 = nn.Upsample(None, 2)
+        self.conv_1 = Conv(self.gw_div(last_ch//2), self.gw_div(last_ch//4), 1, 1, None, 1, 1, False) #input2
+        self.c3_1 = RepC3(self.gw_div(last_ch//2), self.gw_div(last_ch//4), self.gd_muti(n)) 
+        self.conv_1_act = Conv(self.gw_div(last_ch//4), self.gw_div(last_ch//4), 1, 1)
+
+        self.upsample_2 = nn.Upsample(None, 2)
+        self.conv_2 = Conv(self.gw_div(last_ch//4), self.gw_div(last_ch//4), 1, 1, None, 1, 1, False) #input1
+        self.c3_2 = RepC3(self.gw_div(last_ch//2), self.gw_div(last_ch//4), self.gd_muti(n)) #output1
+
+        self.conv_3 = Conv(self.gw_div(last_ch//4), self.gw_div(last_ch//4), 3, 2)
+        self.c3_3 = RepC3(self.gw_div(last_ch//2), self.gw_div(last_ch//4), self.gd_muti(n)) #output2
+
+        self.conv_4 = Conv(self.gw_div(last_ch//4), self.gw_div(last_ch//4), 3, 2)
+        self.c3_4 = RepC3(self.gw_div(last_ch//2), self.gw_div(last_ch//4), self.gd_muti(n)) #output3
+
+    def gd_muti(self, n):
+        gd = self.gd
+        return max(round(n * gd), 1) if n > 1 else n
+
+    def gw_div(self, x):
+        divisor = 8 
+        x *= self.gw
+        return int(math.ceil(x / divisor) * divisor)
+    
+    def forward(self, x1, x2, x3):
+        conv_out1 = self.conv_0_act(self.aifi(self.conv_0(x3))) # 12
+        conv_out2 = self.conv_1_act(self.c3_1(torch.concat((self.conv_1(x2), self.upsample_1(conv_out1)), 1))) # 17
+        out1 = self.c3_2(torch.concat((self.conv_2(x1), self.upsample_2(conv_out2)), 1))
+        out2 = self.c3_3(torch.concat((conv_out2, self.conv_3(out1)), 1))
+        out3 = self.c3_4(torch.concat((conv_out1, self.conv_4(out2)), 1))
+        return out1, out2, out3
