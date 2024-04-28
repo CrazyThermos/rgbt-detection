@@ -1,5 +1,6 @@
-from model.frame import RGBTModel
+from model.frame import *
 from model.neck import Yolov5Neck
+from model.backbone import *
 from PIL import Image
 from matplotlib import pyplot as plt
 from torchvision.transforms import transforms
@@ -13,8 +14,8 @@ from utils.general import LOCAL_RANK
 import os
 os.environ['CUDA_VISIBLE_DEVICES']='1'
 
-
-IMG_SIZE = 1280
+device = "cuda" if torch.cuda.is_available() else "cpu"
+IMG_SIZE = 640
 
 def create_model():
     pass
@@ -183,45 +184,76 @@ if __name__ == "__main__":
     #                             plots=True,
     #                             callbacks=callbacks,
     #                             compute_loss=ComputeLoss(backendmodel))  # val best model with plots
-    import numpy as np
-    from model.mamba import PatchEmbed, Mamba, MambaConfig
-    B, L, D, N = 16, 64, 768, 16
-    testPatchEmbed = PatchEmbed(img_size=IMG_SIZE)
-    rgb_out = testPatchEmbed(rgb)
-    t_out = testPatchEmbed(t)
-    fuse_out = torch.cat((rgb_out,t_out),1)
+    
+    
+    
+    
+    # import numpy as np
+    # from model.mamba import PatchEmbed, Mamba, MambaConfig
+    # B, L, D, N = 16, 64, 768, 16
+    # testPatchEmbed = PatchEmbed(patch_size=4, embed_dim=96, img_size=IMG_SIZE)
+    # rgb_out = testPatchEmbed(rgb)
+    # t_out = testPatchEmbed(t)
+    # fuse_out = torch.cat((rgb_out,t_out),1)
 
-    with torch.no_grad():
-        config = MambaConfig(d_model=D, n_layers=8, d_state=N)
-        model = Mamba(config)
-        
-        rgb_mamba_out = model(rgb_out)
-        rgb_mamba_out = rgb_mamba_out.unsqueeze(3)
-        rgb_mamba_out = rgb_mamba_out.transpose(0, 3)
-        rgb_mamba_out = rgb_mamba_out.reshape(1, 3, IMG_SIZE, IMG_SIZE)
-        rgb_mamba_out = rgb_mamba_out + rgb 
-        rgb_mamba_out = rgb_mamba_out.squeeze(0)
+    # with torch.no_grad():
+    # config = MambaConfig(d_model=D, n_layers=8, d_state=N)
+    # model = Mamba(config)
+    # model = rgbt_Mamba(ch=3)
 
-        t_mamba_out = model(t_out)
-        t_mamba_out = t_mamba_out.unsqueeze(3)
-        t_mamba_out = t_mamba_out.transpose(0, 3)
-        t_mamba_out = t_mamba_out.reshape(1, 3, IMG_SIZE, IMG_SIZE)
-        t_mamba_out = t_mamba_out + t + t
-        t_mamba_out = t_mamba_out.squeeze(0)
+    # rgb_mamba_out = model(rgb_out)
+    # rgb_mamba_out = rgb_mamba_out.unsqueeze(3)
+    # rgb_mamba_out = rgb_mamba_out.transpose(0, 3)
+    # rgb_mamba_out = rgb_mamba_out.reshape(1, 3, IMG_SIZE, IMG_SIZE)
+    # rgb_mamba_out = rgb_mamba_out + rgb 
+    # rgb_mamba_out = rgb_mamba_out.squeeze(0)
 
-        # fuse_mamba_out = model(fuse_out)
-        # fuse_mamba_out = fuse_mamba_out.unsqueeze(3)
-        # fuse_mamba_out = fuse_mamba_out.transpose(0, 3)
-        # fuse_mamba_out = fuse_mamba_out.reshape(2, 3, IMG_SIZE, IMG_SIZE)
-        # rgb_fuse = fuse_mamba_out[1] + t 
-        
-        # t_mamba_out = t_mamba_out + t
-        # t_mamba_out = t_mamba_out.squeeze(0)
-        # mamba_out = rgb_mamba_out + t_mamba_out + rgb.squeeze(0)
-        
-        # p = transforms.ToPILImage(mode="RGB")
-        # rgb_im = p(rgb_fuse.squeeze(0))
-        # rgb_im.save('./mamba_fuse3_out.png')
-        p = transforms.ToPILImage(mode="RGB")
-        rgb_im = p(t_mamba_out)
-        rgb_im.save('./mamba_fuse4_out.png')
+    # t_mamba_out = model(t_out)
+    # t_mamba_out = t_mamba_out.unsqueeze(3)
+    # t_mamba_out = t_mamba_out.transpose(0, 3)
+    # t_mamba_out = t_mamba_out.reshape(1, 3, IMG_SIZE, IMG_SIZE)
+    # t_mamba_out = t_mamba_out + t + t
+    # t_mamba_out = t_mamba_out.squeeze(0)
+
+    # fuse_mamba_out = model(rgb, t)
+    # fuse_mamba_out = fuse_mamba_out.unsqueeze(3)
+    # fuse_mamba_out = fuse_mamba_out.transpose(0, 3)
+    # fuse_mamba_out = fuse_mamba_out.reshape(2, 3, IMG_SIZE, IMG_SIZE)
+    # rgb_fuse = fuse_mamba_out[1] + t 
+    
+    # t_mamba_out = t_mamba_out + t
+    # t_mamba_out = t_mamba_out.squeeze(0)
+    # mamba_out = rgb_mamba_out + t_mamba_out + rgb.squeeze(0)
+    
+    # p = transforms.ToPILImage(mode="RGB")
+    # rgb_im = p(rgb_fuse.squeeze(0))
+    # rgb_im.save('./mamba_fuse3_out.png')
+    # p = transforms.ToPILImage(mode="RGB")
+    # rgb_im = p(t_mamba_out)
+    # rgb_im.save('./mamba_fuse4_out.png')
+
+    # from model.frame import *
+    # x = torch.randn(2, 4, 19, 19)
+    layer = rgbt_unireplknet(3, num_classes=6, dims=(128, 256, 512, 1024), depths=(3, 3, 18, 3), attempt_use_lk_impl=True).to(device)
+    # for n, p in layer.named_parameters():
+    #     if 'beta' in n:
+    #         torch.nn.init.ones_(p)
+    #     else:
+    #         torch.nn.init.normal_(p)
+    # for n, p in layer.named_buffers():
+    #     if 'running_var' in n:
+    #         print('random init var')
+    #         torch.nn.init.uniform_(p)
+    #         p.data += 2
+    #     elif 'running_mean' in n:
+    #         print('random init mean')
+    #         torch.nn.init.uniform_(p)
+    # layer.gamma.data += 0.5
+    layer.eval()
+    rgb = rgb.to(device)
+    t = t.to(device)
+    origin_y = layer(rgb, t)
+    layer.reparameterize_unireplknet()
+    eq_y = layer(rgb, t)
+
+    print("output difference:", ((origin_y - eq_y) ** 2).mean())

@@ -45,6 +45,7 @@ from utils.general import (LOGGER, TQDM_BAR_FORMAT, check_dataset, check_img_siz
 from utils.metrics import ConfusionMatrix, ap_per_class, box_iou
 from utils.plots import output_to_target, plot_images # plot_val_study
 from utils.torch_utils import select_device, smart_inference_mode
+from model.frame import RGBTModel, rgbtmodel_factory
 
 def save_one_txt(predn, save_conf, shape, file):
     # Save one txt result
@@ -118,8 +119,8 @@ def run(
         exist_ok=False,  # existing project/name ok, do not increment
         half=True,  # use FP16 half-precision inference
         dnn=False,  # use OpenCV DNN for ONNX inference
+        model_name=None,
         model=None,
-        backendmodel=None,
         dataloader=None,
         save_dir=Path(''),
         plots=True,
@@ -140,8 +141,10 @@ def run(
         (save_dir / 'labels' if save_txt else save_dir).mkdir(parents=True, exist_ok=True)  # make dir
 
         # Load model
-
-        model = RGBTDetectMultiBackend(backendmodel, weights, device=device, dnn=dnn, data=data, fp16=half)
+        # backendmodel = rgbtmodel_factory(model_name='rgbt_rtdetr',ch=3, nc=6, gd=0.33,gw=0.5, training=False).to(device).eval()
+        # backendmodel.names = {0:'0'}
+        # backendmodel.names = {0:'0', 1:'1', 2:'2', 3:'3', 4:'4', 5:'5', 6:'6'}
+        model = RGBTDetectMultiBackend(model_name ,weights, device=device, dnn=dnn, data=data, fp16=half)
         stride, pt, jit, engine = model.stride, model.pt, model.jit, model.engine
         imgsz = check_img_size(imgsz, s=stride)  # check image size
         half = model.fp16  # FP16 supported on limited backends with CUDA
@@ -370,6 +373,7 @@ def parse_opt():
     parser.add_argument('--exist-ok', action='store_true', help='existing project/name ok, do not increment')
     parser.add_argument('--half', action='store_true', help='use FP16 half-precision inference')
     parser.add_argument('--dnn', action='store_true', help='use OpenCV DNN for ONNX inference')
+    parser.add_argument('--model-name', type=str, default='rgbt_yolov5', help='train, val image size (pixels)')
     opt = parser.parse_args()
     opt.data = check_yaml(opt.data)  # check YAML
     opt.save_json |= opt.data.endswith('coco.yaml')

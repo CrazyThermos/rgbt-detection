@@ -42,7 +42,7 @@ ROOT = Path(os.path.relpath(ROOT, Path.cwd()))  # relative
 
 import val as validate  # for end-of-epoch mAP
 from model.common import attempt_load
-from model.frame import RGBTModel
+from model.frame import  rgbtmodel_factory
 from utils.anchor import check_anchors
 # from utils.autobatch import check_train_batch_size
 from utils.callbacks import Callbacks
@@ -51,7 +51,7 @@ from dataset.rgbt_dataset import create_rgbtdataloader
 from utils.general import LOGGER, LOCAL_RANK, TQDM_BAR_FORMAT, colorstr, yaml_save, init_seeds, check_dataset, \
     check_suffix, check_yaml, check_file, check_img_size, intersect_dicts, one_cycle, labels_to_class_weights, \
     labels_to_image_weights, print_mutation, strip_optimizer, print_args, increment_path, \
-    get_latest_run, methods
+    get_latest_run, methods, check_amp
 from utils.autobatch import autobatch, check_train_batch_size
 from utils.loggers import LOGGERS, Loggers
 
@@ -67,6 +67,7 @@ LOCAL_RANK = int(os.getenv('LOCAL_RANK', -1))  # https://pytorch.org/docs/stable
 RANK = int(os.getenv('RANK', -1))
 WORLD_SIZE = int(os.getenv('WORLD_SIZE', 1))
 # GIT_INFO = check_git_info()
+DEBUG = False
 
 
 def train(hyp, opt, device, callbacks):  # hyp is path/to/hyp.yaml or hyp dictionary
@@ -124,14 +125,16 @@ def train(hyp, opt, device, callbacks):  # hyp is path/to/hyp.yaml or hyp dictio
         # with torch_distributed_zero_first(LOCAL_RANK):
         #     weights = attempt_download(weights)  # download if not found locally
         ckpt = torch.load(weights, map_location='cpu')  # load checkpoint to CPU to avoid CUDA memory leak
-        model = RGBTModel( ch=3, nc=nc, gd=0.33, gw=0.5, training=True).to(device)  # create
+        model = rgbtmodel_factory(model_name= opt.model_name,ch=3, nc=nc, gd=0.33,gw=0.5, training=True).to(device)  # create
         exclude = ['anchor'] if (hyp.get('anchors')) and not resume else []  # exclude keys
         csd = ckpt['model'].float().state_dict()  # checkpoint state_dict as FP32
         csd = intersect_dicts(csd, model.state_dict(), exclude=exclude)  # intersect
         model.load_state_dict(csd, strict=False)  # load
         LOGGER.info(f'Transferred {len(csd)}/{len(model.state_dict())} items from {weights}')  # report
     else:
-        model = RGBTModel(ch=3, nc=nc, gd=0.33, gw=0.5, training=True).to(device)  # create
+        model = rgbtmodel_factory(model_name= opt.model_name,ch=3, nc=nc, gd=0.33,gw=0.5, training=True).to(device)
+        LOGGER.info(f'from factory get model:{opt.model_name}')  # report
+
     # amp = check_amp(model)  # check AMP
     amp = False
     # Freeze
@@ -380,22 +383,23 @@ def train(hyp, opt, device, callbacks):  # hyp is path/to/hyp.yaml or hyp dictio
             # Update best mAP
             fi = fitness(np.array(results).reshape(1, -1))  # weighted combination of [P, R, mAP@.5, mAP@.5-.95]
             stop = stopper(epoch=epoch, fitness=fi)  # early stop check
+
             if fi > best_fitness:
                 best_fitness = fi
             log_vals = list(mloss) + list(results) + lr
             callbacks.run('on_fit_epoch_end', log_vals, epoch, best_fitness, fi)
-
+            
             # Save model
             if (not nosave) or (final_epoch and not evolve):  # if save
                 ckpt = {
                     'epoch': epoch,
                     'best_fitness': best_fitness,
-                    'model': deepcopy(de_parallel(model)).half(),
-                    'ema': deepcopy(ema.ema).half(),
+                    'model': deepcopy(de_parallel(model)),
+                    'ema': deepcopy(ema.ema),
                     'updates': ema.updates,
                     'optimizer': optimizer.state_dict(),
                     'opt': vars(opt),
-                    #'git': GIT_INFO,  # {remote, branch, commit} if a git repo
+                    'git': None,  # {remote, branch, commit} if a git repo
                     'date': datetime.now().isoformat()}
 
                 # Save last, best and delete
@@ -407,6 +411,32 @@ def train(hyp, opt, device, callbacks):  # hyp is path/to/hyp.yaml or hyp dictio
                 del ckpt
                 callbacks.run('on_model_save', last, epoch, final_epoch, best_fitness, fi)
 
+            if DEBUG:
+                for f in last, best:
+                    LOGGER.info(f'\ndebug {f}...')
+                    # debugmodel = rgbtmodel_factory(model_name= opt.model_name,ch=3, nc=nc, gd=0.33,gw=0.5, training=True).to(device)
+                    # debugmodel.names = {0:'0'}
+                    mse_loss = torch.nn.MSELoss()
+                    err = mse_loss(list(ema.ema._modules.items())[0][1].conv.weight.data, list(deepcopy(ema.ema)._modules.items())[0][1].conv.weight.data)
+                    LOGGER.info(f'\n err :{err}')
+                    debug_results, _, _ = validate.run(
+                        data_dict,
+                        batch_size=batch_size // WORLD_SIZE * 2,
+                        imgsz=imgsz,
+                        model=attempt_load(model_name = opt.model_name, weights=f, device=device, training=False).half().eval(), # attempt_load(f, device).half(),
+                        single_cls=single_cls,
+                        dataloader=val_loader,
+                        save_dir=save_dir,
+                        save_json=is_coco,
+                        verbose=True,
+                        plots=plots,
+                        callbacks=callbacks,
+                        compute_loss=compute_loss)  # val best model with plots
+                    if(abs(debug_results[3] - results[3]) > 0.01):
+                        debug_fi = fitness(np.array(debug_results).reshape(1, -1)) 
+                        LOGGER.info(f'\nfitness {f}:{debug_fi}...')
+                        # fi = fitness(np.array(results).reshape(1, -1)) 
+                        pass
         # EarlyStopping
         if RANK != -1:  # if DDP training
             broadcast_list = [stop if RANK == 0 else None]
@@ -429,7 +459,7 @@ def train(hyp, opt, device, callbacks):  # hyp is path/to/hyp.yaml or hyp dictio
                         data_dict,
                         batch_size=batch_size // WORLD_SIZE * 2,
                         imgsz=imgsz,
-                        model=attempt_load(model, f, device).half(), # attempt_load(f, device).half(),
+                        model=attempt_load(model_name = opt.model_name, weights=f, device=device, training=False).half(), # attempt_load(f, device).half(),
                         iou_thres=0.65 if is_coco else 0.60,  # best pycocotools at iou 0.65
                         single_cls=single_cls,
                         dataloader=val_loader,
@@ -457,6 +487,7 @@ def parse_opt(known=False):
     parser.add_argument('--epochs', type=int, default=100, help='total training epochs')
     parser.add_argument('--batch-size', type=int, default=16, help='total batch size for all GPUs, -1 for autobatch')
     parser.add_argument('--imgsz', '--img', '--img-size', type=int, default=640, help='train, val image size (pixels)')
+    parser.add_argument('--model-name', type=str, default='rgbt_yolov5', help='train, val image size (pixels)')
     parser.add_argument('--rect', action='store_true', help='rectangular training')
     parser.add_argument('--resume', nargs='?', const=True, default=False, help='resume most recent training')
     parser.add_argument('--nosave', action='store_true', help='only save final checkpoint')

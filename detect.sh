@@ -4,4 +4,5 @@ python detect.py --weights '/home/zhengyuhang/multimodal-object-detection/RGBT-D
                 --imgsz 1280  \
                 --device 0 \
                 --source '/home/zhengyuhang/datasets/TEST/images/val' \
+                --model-name 'rgbt_yolov5_aff'\
                 --draw_edge

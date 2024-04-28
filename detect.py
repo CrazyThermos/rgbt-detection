@@ -41,7 +41,6 @@ ROOT = FILE.parents[0]  # YOLOv5 root directory
 if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))  # add ROOT to PATH
 ROOT = Path(os.path.relpath(ROOT, Path.cwd()))  # relative
-from model.frame import RGBTModel
 from model.common import RGBTDetectMultiBackend
 from dataset.rgbt_dataset import LoadRGBTImages
 # from utils.dataloaders import IMG_FORMATS, VID_FORMATS, LoadImages, LoadScreenshots, LoadStreams
@@ -80,7 +79,8 @@ def run(
         half=False,  # use FP16 half-precision inference
         dnn=False,  # use OpenCV DNN for ONNX inference
         vid_stride=1,  # video frame-rate stride    
-        draw_edge=False
+        draw_edge=False,
+        model_name=None
 ):
     source = str(source)
     save_img = not nosave and not source.endswith('.txt')  # save inference images
@@ -98,9 +98,9 @@ def run(
     # Load model
 
     device = select_device(device)
-    backendmodel = RGBTModel(3, nc=1, gd=0.33, gw=0.5, training=False).to(device=device)
-    backendmodel.names = ['person'] 
-    model = RGBTDetectMultiBackend(backendmodel, weights, device=device, dnn=dnn, data=data, fp16=half)
+    # backendmodel = RGBTModel(3, nc=1, gd=0.33, gw=0.5, training=False).to(device=device)
+    # backendmodel.names = ['person'] 
+    model = RGBTDetectMultiBackend(model_name, weights, device=device, dnn=dnn, data=data, fp16=half)
     stride, names, pt = model.stride, model.names, model.pt
     imgsz = check_img_size(imgsz, s=stride)  # check image size
 
@@ -289,6 +289,7 @@ def parse_opt():
     parser.add_argument('--dnn', action='store_true', help='use OpenCV DNN for ONNX inference')
     parser.add_argument('--vid-stride', type=int, default=1, help='video frame-rate stride')
     parser.add_argument('--draw_edge', action='store_true', help='outline the edges of each detected object.')
+    parser.add_argument('--model-name', type=str, default='rgbt_yolov5', help='train, val image size (pixels)')
     opt = parser.parse_args()
     opt.imgsz *= 2 if len(opt.imgsz) == 1 else 1  # expand
     print_args(vars(opt))

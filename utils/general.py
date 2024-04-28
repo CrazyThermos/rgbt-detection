@@ -29,6 +29,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Optional
 from utils.metrics import box_iou
+from copy import deepcopy
 
 FILE = Path(__file__).resolve()
 ROOT = FILE.parents[1]  # YOLOv5 root directory
@@ -1531,3 +1532,31 @@ def check_file(file, suffix=''):
         assert len(files), f'File not found: {file}'  # assert file was found
         assert len(files) == 1, f"Multiple files match '{file}', specify exact path: {files}"  # assert unique
         return files[0]  # return file
+
+def check_amp(model):
+    """Checks PyTorch AMP functionality for a model, returns True if AMP operates correctly, otherwise False."""
+    from model.common import AutoShape, RGBTDetectMultiBackend
+
+    def amp_allclose(model, im):
+        # All close FP32 vs AMP results
+        m = AutoShape(model, verbose=False)  # model
+        a = m(im).xywhn[0]  # FP32 inference
+        m.amp = True
+        b = m(im).xywhn[0]  # AMP inference
+        return a.shape == b.shape and torch.allclose(a, b, atol=0.1)  # close to 10% absolute tolerance
+
+    prefix = colorstr("AMP: ")
+    device = next(model.parameters()).device  # get model device
+    if device.type in ("cpu", "mps"):
+        return False  # AMP only used on CUDA devices
+    # f = ROOT / "data" / "images" / "bus.jpg"  # image to check
+    im = np.ones((640, 640, 3))
+    try:
+        assert amp_allclose(deepcopy(model), im) or amp_allclose(RGBTDetectMultiBackend("yolov5n.pt", device), im)
+        LOGGER.info(f"{prefix}checks passed ✅")
+        return True
+    except Exception:
+        help_url = "https://github.com/ultralytics/yolov5/issues/7908"
+        LOGGER.warning(f"{prefix}checks failed ❌, disabling Automatic Mixed Precision. See {help_url}")
+        return False
+
