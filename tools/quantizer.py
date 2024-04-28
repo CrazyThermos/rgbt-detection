@@ -38,7 +38,7 @@ from typing import Iterable, List, Union
 from pathlib import Path
 
 class CustomizedExporter(GraphExporter):
-    def export(self, file_path: str, save_name: str, platform: int, graph: BaseGraph, config_path: str = None, show_config: bool = False, **kwargs):
+    def export(self, file_path: str, save_name: str, platform: int, graph: BaseGraph, input_shape:List, input_names:List=[], dynamic_shape: bool = False, show_config: bool = False, **kwargs):
         print('This exporter does not export quantitative information to file, '
               'it prints quantitative information to the console instead.')
         for opname, op in graph.operations.items():
@@ -66,10 +66,20 @@ class CustomizedExporter(GraphExporter):
                     print(f'\t Quant_min: {config.quant_min}')
                     print(f'\t Quant_max: {config.quant_max}')
 
-        export_ppq_graph(
-            graph=graph, platform=platform,
-            graph_save_to = os.path.join(file_path, save_name+'_quantized.onnx'),
-            config_save_to = os.path.join(file_path, save_name+'_quantized.json'))
+        if dynamic_shape:
+            for name in input_names:
+                var = graph.variables[name]
+                var.shape = ['Batch', 3, input_shape[2], input_shape[3]]
+
+            export_ppq_graph(
+                graph=graph, platform=platform,
+                graph_save_to = os.path.join(file_path, save_name+'_dynamic_quantized.onnx'),
+                config_save_to = os.path.join(file_path, save_name+'_dynamic_quantized.json'))
+        else:
+            export_ppq_graph(
+                graph=graph, platform=platform,
+                graph_save_to = os.path.join(file_path, save_name+'_quantized.onnx'),
+                config_save_to = os.path.join(file_path, save_name+'_quantized.json'))
 
 class CustomizedInt8Quantizer(BaseQuantizer):
     def __init__(
@@ -228,7 +238,7 @@ def load_image(image_path:str, input_shape:List[int]):
     im = cv.resize(im, (h, w), interpolation=cv.INTER_AREA)
     return im
 
-def load_calibration_dataset( directory: str, input_shape: List[int], batch_size: int, calibration_count: int) -> Iterable:
+def load_calibration_dataset( directory: str, input_shape: List[int], batch_size: int, calibration_count: int, img_format: str = 'jpg') -> Iterable:
     # ------------------------------------------------------------
     # 让我们从创建 calibration 数据开始做起， PPQ 需要你送入 32 ~ 1024 个样本数据作为校准数据集
     # 它们应该尽可能服从真实样本的分布，量化过程如同训练过程一样存在可能的过拟合问题
@@ -237,7 +247,7 @@ def load_calibration_dataset( directory: str, input_shape: List[int], batch_size
     random_list=[]
     images_list=[]
     dir_paths = Path(directory)
-    images = sorted(list(dir_paths.glob('*.jpg')))
+    images = sorted(list(dir_paths.glob('*.'+img_format)))
     images_list += list(images)
     random_list = random.sample(images_list, calibration_count)
     batches, batch = [], []
@@ -259,15 +269,15 @@ def load_calibration_dataset( directory: str, input_shape: List[int], batch_size
 def collate_fn(batch: torch.Tensor) -> torch.Tensor:
     return batch.to(DEVICE).float() / 255
 
-def load_calibration_rgbt_dataset( directory: str, input_shape: List[int], batch_size: int, calibration_count: int) -> Iterable:
+def load_calibration_rgbt_dataset( directory: str, input_shape: List[int], batch_size: int, calibration_count: int, img_format: str = 'jpg') -> Iterable:
     # ------------------------------------------------------------
     # 让我们从创建 calibration 数据开始做起， PPQ 需要你送入 32 ~ 1024 个样本数据作为校准数据集
     # 它们应该尽可能服从真实样本的分布，量化过程如同训练过程一样存在可能的过拟合问题
     # 你应当保证校准数据是经过正确预处理的、有代表性的数据，否则量化将会失败；校准数据不需要标签；数据集不能乱序
     # ------------------------------------------------------------
     path = Path(directory)
-    rgb_images = sorted(list(path.glob('*_rgb.jpg')))
-    t_images = sorted(list(path.glob('*_t.jpg')))
+    rgb_images = sorted(list(path.glob('*_rgb.'+img_format)))
+    t_images = sorted(list(path.glob('*_t.'+img_format)))
     assert len(rgb_images) == len(t_images), f'The number of RGB images is not equal to the number of infrared images, {len(rgb_images)}!={len(t_images)}'
     pair_list = list(zip(rgb_images, t_images))
     random_list = random.sample(pair_list, calibration_count)
@@ -301,18 +311,19 @@ def rgbt_collate_fn(batch: torch.Tensor) -> torch.Tensor:
 
 if __name__ == "__main__":
     BATCHSIZE   = 1
-    INPUT_SHAPE = [BATCHSIZE, 3, 1280, 1280]
+    INPUT_SHAPE = [BATCHSIZE, 3, 640, 640]
     DEVICE      = 'cuda'
     QUANT_PLATFORM    = TargetPlatform.TRT_INT8
     DEPLOY_PLATFORM    = TargetPlatform.TRT_INT8
 
     EXPORT_DIRECTORY = './'
-    DATASET_DIRECTORY = '/home/zhengyuhang/datasets/LLVIP_yolo/images/val'
-    ONNX_PATH = './rgbt_yolov5_op13.onnx'
+    DATASET_DIRECTORY = '/home/zhengyuhang/datasets/M3FD_yolo/images/val'
+    ONNX_PATH = './rgbt_yolov5_m3fd_op13.onnx'
     CALIBRATION_COUNT = 128
     REQUIRE_ANALYSE = True
     RGBT_MODEL = True
-
+    SAVE_NAME = 'rgbt_yolov5_m3fd_op13'
+    IMAGE_FORMAT='png'
     with ENABLE_CUDA_KERNEL():
         # torch model
         # model = torchvision.models.resnet18(pretrained=True).cuda()
@@ -327,12 +338,12 @@ if __name__ == "__main__":
         search_engine = SearchableGraph(graph)
         
         # operators with low quantization accuracy are not quantized
-        for op in search_engine.opset_matching( 
-            sp_expr=lambda x: x.name in {'/model.24/m.0/Conv','/model.24/m.1/Conv','/model.24/m.2/Conv'},
-            rp_expr=lambda x, y: True,
-            ep_expr=None, direction='down'
-        ):
-            dispatching[op.name] = TargetPlatform.FP32
+        # for op in search_engine.opset_matching( 
+        #     sp_expr=lambda x: x.name in {'/model.24/m.0/Conv','/model.24/m.1/Conv','/model.24/m.2/Conv'},
+        #     rp_expr=lambda x, y: True,
+        #     ep_expr=None, direction='down'
+        # ):
+        #     dispatching[op.name] = TargetPlatform.FP32
 
         # initialize quantization information
         for op in graph.operations.values():
@@ -359,7 +370,7 @@ if __name__ == "__main__":
         ])
 
         if RGBT_MODEL:
-            calibration_dataloader = load_calibration_rgbt_dataset(directory=DATASET_DIRECTORY, input_shape=INPUT_SHAPE, batch_size=BATCHSIZE, calibration_count=CALIBRATION_COUNT)
+            calibration_dataloader = load_calibration_rgbt_dataset(directory=DATASET_DIRECTORY, input_shape=INPUT_SHAPE, batch_size=BATCHSIZE, calibration_count=CALIBRATION_COUNT, img_format=IMAGE_FORMAT)
             pipeline.optimize(
                 graph=graph, dataloader=calibration_dataloader, verbose=True, 
                 calib_steps=CALIBRATION_COUNT, collate_fn=rgbt_collate_fn, executor=executor)
@@ -373,11 +384,16 @@ if __name__ == "__main__":
                 layerwise_error_analyse(graph=graph, running_device=DEVICE,
                                         interested_outputs=None,
                                         dataloader=calibration_dataloader, collate_fn=rgbt_collate_fn)
-            CustomizedExporter().export(file_path=EXPORT_DIRECTORY, save_name='rgbt_yolov5_op13', 
-                                platform=DEPLOY_PLATFORM, graph=graph, config_path=None)
+            CustomizedExporter().export(file_path=EXPORT_DIRECTORY, 
+                                        save_name=SAVE_NAME, 
+                                        platform=DEPLOY_PLATFORM, 
+                                        graph=graph, 
+                                        input_shape=INPUT_SHAPE,
+                                        input_names=['input0', 'input1'],
+                                        dynamic_shape=True)
         else:
             # Calling quantization optimization pipeline.
-            calibration_dataloader = load_calibration_dataset(directory=DATASET_DIRECTORY, input_shape=INPUT_SHAPE, batch_size=BATCHSIZE, calibration_count=CALIBRATION_COUNT)
+            calibration_dataloader = load_calibration_dataset(directory=DATASET_DIRECTORY, input_shape=INPUT_SHAPE, batch_size=BATCHSIZE, calibration_count=CALIBRATION_COUNT, img_format=IMAGE_FORMAT)
             pipeline.optimize(
                 graph=graph, dataloader=calibration_dataloader, verbose=True, 
                 calib_steps=CALIBRATION_COUNT, collate_fn=collate_fn, executor=executor)
@@ -391,5 +407,10 @@ if __name__ == "__main__":
                 layerwise_error_analyse(graph=graph, running_device=DEVICE,
                                         interested_outputs=None,
                                         dataloader=calibration_dataloader, collate_fn=collate_fn)
-            CustomizedExporter().export(file_path=EXPORT_DIRECTORY, save_name='rgbt_yolov5_op13', 
-                                platform=DEPLOY_PLATFORM, graph=graph, config_path=None)
+            CustomizedExporter().export(file_path=EXPORT_DIRECTORY,
+                                        save_name=SAVE_NAME, 
+                                        platform=DEPLOY_PLATFORM, 
+                                        graph=graph, 
+                                        input_shape=INPUT_SHAPE,
+                                        input_names=['images'],
+                                        dynamic_shape=True)
