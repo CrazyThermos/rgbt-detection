@@ -1,12 +1,12 @@
  #!/usr/bin/env
 python train.py --data dataset/m3fd.yaml \
                 --hyp configs/hyp.scratch-low.yaml \
-                --model-name 'rgbt_rtdetr' \
+                --model-name 'rgbt_yolov5' \
                 --optimizer SGD \
                 --batch-size 32 \
-                --epochs 330 \
+                --epochs 300 \
                 --img 640 \
-                --name rtdetr \
+                --name rgbt_m3fd \
                 --device 2
 
 

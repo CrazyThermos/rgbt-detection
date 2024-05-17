@@ -1,5 +1,7 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
+
 from utils.general import de_parallel
 from utils.metrics import bbox_iou
 
@@ -80,7 +82,44 @@ class QFocalLoss(nn.Module):
         else:  # 'none'
             return loss
 
+class GradientLoss(nn.Module):
+    def __init__(self):
+        super(GradientLoss, self).__init__()
+        sobel_x = torch.Tensor([[1, 0, -1], [2, 0, -2], [1, 0, -1]])
+        sobel_y = torch.Tensor([[1, 2, 1], [0, 0, 0], [-1, -2, -1]])
+        sobel_3x = torch.FloatTensor(sobel_x).unsqueeze(0).unsqueeze(0)
+        sobel_3y = torch.FloatTensor(sobel_y).unsqueeze(0).unsqueeze(0)
+        self.conv_hx_weight = torch.nn.Parameter(sobel_3x, requires_grad=False)
+        self.conv_hy_weight = torch.nn.Parameter(sobel_3y, requires_grad=False)
+        self.mse = nn.MSELoss()
+        self.alpha = 0.1
 
+    def differentiate(self, X):
+        batch, channel, height, width = X.shape
+        if channel == 3:
+            x = torch.zeros((batch, channel, height, width))
+            x = 0.299 * X[:,0,:,:] + 0.587 * X[:,1,:,:] + 0.114 * X[:,2,:,:]
+            X = x.reshape((batch, 1, height, width))
+        hx = F.conv2d(X, self.conv_hx_weight, padding=1)
+        hy = F.conv2d(X, self.conv_hy_weight, padding=1)
+        # G_X = torch.sqrt(torch.pow(hx, 2) + torch.pow(hy, 2)+1e-6)
+        return hx + hy
+        # return G_X
+    
+    def soft_threshold(self, x):
+        result = torch.sign(x) * torch.max(torch.zeros_like(x), torch.abs(x) - self.alpha)
+        return result
+    
+    def forward(self, Fuse, T1, T2):
+        G_T1 = self.soft_threshold(self.differentiate(T1))
+        G_T2 = self.soft_threshold(self.differentiate(T2))
+        G_F = self.differentiate(Fuse)
+
+        GT = torch.where(torch.abs(G_T1) > torch.abs(G_T2), G_T1, G_T2)
+        loss = self.mse(G_F, GT)
+
+        return loss
+    
 class ComputeLoss:
     sort_obj_iou = False
 

@@ -69,7 +69,7 @@ class fuse_block_CA(nn.Module):
 
         # self.h = h
         # self.w = w
-        self.conv1x1 = nn.Conv2d(ch * 2, ch,(1,1))
+        self.conv1x1 = nn.Conv2d(ch * 2, ch,(1,1), bias=False)
         self.avg_pool_x = nn.AdaptiveAvgPool2d((None, 1))
         self.avg_pool_y = nn.AdaptiveAvgPool2d((1, None))
 
@@ -86,21 +86,33 @@ class fuse_block_CA(nn.Module):
 
     def forward(self, rgb, t):
         
-        x = rgb + t
-        # c = torch.cat((rgb, t), 1)
-        # x = self.conv1x1(c)
-        _, _, h, w = x.size() 
-        x_h = self.avg_pool_x(x).permute(0, 1, 3, 2)
-        x_w = self.avg_pool_y(x)
+        # x = rgb + t
+        c = torch.cat((rgb, t), 1)
+        c = self.conv1x1(c)
+        _, _, h, w = c.size()
 
-        x_cat_conv_relu = self.relu(self.conv_1x1(torch.cat((x_h, x_w), 3)))
+        rgb_h = self.avg_pool_x(rgb)
+        rgb_w = self.avg_pool_y(rgb).permute(0, 1, 3, 2)
 
-        x_cat_conv_split_h, x_cat_conv_split_w = x_cat_conv_relu.split([h, w], 3)
+        rgb_cat_conv_relu = self.relu(self.conv_1x1(torch.cat((rgb_h, rgb_w), 2)))
 
-        s_h = self.sigmoid_h(self.F_h(x_cat_conv_split_h.permute(0, 1, 3, 2)))
-        s_w = self.sigmoid_w(self.F_w(x_cat_conv_split_w))
+        rgb_cat_conv_split_h, rgb_cat_conv_split_w = rgb_cat_conv_relu.split([h, w], 2)
 
-        out = x * s_h.expand_as(x) * s_w.expand_as(x)
+        rgb_s_h = self.sigmoid_h(self.F_h(rgb_cat_conv_split_h))
+        rgb_s_w = self.sigmoid_w(self.F_w(rgb_cat_conv_split_w.permute(0, 1, 3, 2)))
+
+        # _, _, h, w = rgb.size() 
+        t_h = self.avg_pool_x(t)
+        t_w = self.avg_pool_y(t).permute(0, 1, 3, 2)
+
+        t_cat_conv_relu = self.relu(self.conv_1x1(torch.cat((t_h, t_w), 2)))
+
+        t_cat_conv_split_h, t_cat_conv_split_w = t_cat_conv_relu.split([h, w], 2)
+
+        t_s_h = self.sigmoid_h(self.F_h(t_cat_conv_split_h))
+        t_s_w = self.sigmoid_w(self.F_w(t_cat_conv_split_w.permute(0, 1, 3, 2)))
+        
+        out = c * (rgb_s_h * rgb_s_w + t_s_h * t_s_w)
 
         return out
     

@@ -39,8 +39,8 @@ if __name__ == "__main__":
 
     rgb = Image.open("test_imgs/010001.jpg")
     t   = Image.open("test_imgs/010001_ir.jpg")
-    rgb = transform(rgb).unsqueeze(0)
-    t   = transform(t).unsqueeze(0)
+    rgb = transform(rgb).unsqueeze(0).to(device)
+    t   = transform(t).unsqueeze(0).to(device)
 
     cfg = "yolov5s"
     layer_yolov5s = ["conv_1.act_32", "c3_1.cv3.bn", "c3_2.cv3.bn", "c3_3.cv3.bn", "c3_4.cv3.bn"]
@@ -188,18 +188,18 @@ if __name__ == "__main__":
     
     
     
-    # import numpy as np
-    # from model.mamba import PatchEmbed, Mamba, MambaConfig
-    # B, L, D, N = 16, 64, 768, 16
-    # testPatchEmbed = PatchEmbed(patch_size=4, embed_dim=96, img_size=IMG_SIZE)
-    # rgb_out = testPatchEmbed(rgb)
-    # t_out = testPatchEmbed(t)
-    # fuse_out = torch.cat((rgb_out,t_out),1)
+    import numpy as np
+    from model.mamba import PatchEmbed, Mamba, MambaConfig
+    B, L, D, N = 16, 64, 768, 16
+    testPatchEmbed = PatchEmbed(patch_size=4, embed_dim=96, img_size=IMG_SIZE).to(device)
+    rgb_out = testPatchEmbed(rgb)
+    t_out = testPatchEmbed(t)
+    fuse_out = torch.cat((rgb_out,t_out),1).to(device)
 
     # with torch.no_grad():
     # config = MambaConfig(d_model=D, n_layers=8, d_state=N)
     # model = Mamba(config)
-    # model = rgbt_Mamba(ch=3)
+    model = rgbt_Mamba(ch=3).to(device)
 
     # rgb_mamba_out = model(rgb_out)
     # rgb_mamba_out = rgb_mamba_out.unsqueeze(3)
@@ -215,19 +215,19 @@ if __name__ == "__main__":
     # t_mamba_out = t_mamba_out + t + t
     # t_mamba_out = t_mamba_out.squeeze(0)
 
-    # fuse_mamba_out = model(rgb, t)
-    # fuse_mamba_out = fuse_mamba_out.unsqueeze(3)
-    # fuse_mamba_out = fuse_mamba_out.transpose(0, 3)
-    # fuse_mamba_out = fuse_mamba_out.reshape(2, 3, IMG_SIZE, IMG_SIZE)
-    # rgb_fuse = fuse_mamba_out[1] + t 
+    fuse_mamba_out = model(rgb, t)
+    fuse_mamba_out = fuse_mamba_out.unsqueeze(3)
+    fuse_mamba_out = fuse_mamba_out.transpose(0, 3)
+    fuse_mamba_out = fuse_mamba_out.reshape(2, 3, IMG_SIZE, IMG_SIZE)
+    rgb_fuse = fuse_mamba_out[1] + t 
     
     # t_mamba_out = t_mamba_out + t
     # t_mamba_out = t_mamba_out.squeeze(0)
     # mamba_out = rgb_mamba_out + t_mamba_out + rgb.squeeze(0)
     
-    # p = transforms.ToPILImage(mode="RGB")
-    # rgb_im = p(rgb_fuse.squeeze(0))
-    # rgb_im.save('./mamba_fuse3_out.png')
+    p = transforms.ToPILImage(mode="RGB")
+    rgb_im = p(rgb_fuse.squeeze(0))
+    rgb_im.save('./mamba_fuse3_out.png')
     # p = transforms.ToPILImage(mode="RGB")
     # rgb_im = p(t_mamba_out)
     # rgb_im.save('./mamba_fuse4_out.png')

@@ -8,9 +8,10 @@ from model.neck import Yolov5Neck, RTDETRNeck
 from model.head import Yolov5DetectHead
 from model.fuseblock import fuse_block_conv1x1,fuse_block_AFF,fuse_block_CA
 from model.mamba import PatchEmbed, PatchMerge
-from model.vmamba import PatchEmbed2D
+from model.vmamba import PatchEmbed2D, PatchMerging2D
 from model.unireplknet import UniRepLKNetBlock, LayerNorm, partial
 from model.replknet import enable_sync_bn, conv_bn_relu, fuse_bn, get_conv2d, get_bn, checkpoint, RepLKNetStage
+from model.decoder import FusionDecoder
 class base_model(nn.Module):
     def __init__(self) -> None:
         super().__init__()
@@ -157,7 +158,7 @@ class rgbt_yolov5_CA(nn.Module):
         self.t_block2 = yolov5_backbone_block(last_ch//8, last_ch//4, n=6, gd=gd, gw=gw)
         self.t_block3 = yolov5_backbone_block(last_ch//4, last_ch//2, n=9, gd=gd, gw=gw)
         self.t_block4 = yolov5_backbone_block(last_ch//2, last_ch, n=3, gd=gd, gw=gw)
-        self.t_sppf   = SPPF(self.gw_div(1024), self.gw_div(1024), 5)
+        self.t_sppf   = SPPF(self.gw_div(last_ch), self.gw_div(last_ch), 5)
 
         self.fuse_block1 = fuse_block_CA(ch=self.gw_div(last_ch//8))
         self.fuse_block2 = fuse_block_CA(ch=self.gw_div(last_ch//4))
@@ -180,78 +181,80 @@ class rgbt_yolov5_CA(nn.Module):
         
         rgb_f2 = self.rgb_block2(rgb_f1 + fuse_f1)
         t_f2 = self.t_block2(t_f1 + fuse_f1)
-        fuse1 = rgb_f2 + t_f2
+        # fuse1 = rgb_f2 + t_f2
         fuse_f2 = self.fuse_block2(rgb_f2, t_f2)
         
         rgb_f3 = self.rgb_block3(rgb_f2 + fuse_f2)
         t_f3 = self.t_block3(t_f2 + fuse_f2)
-        fuse2 = rgb_f3 + t_f3
+        # fuse2 = rgb_f3 + t_f3
         fuse_f3 = self.fuse_block3(rgb_f3, t_f3)
         
         rgb_f4 = self.rgb_block4(rgb_f3 + fuse_f3)
         t_f4 = self.t_block4(t_f3 + fuse_f3)
         rgb_f4 = self.rgb_sppf(rgb_f4)
         t_f4 = self.t_sppf(t_f4)
-        fuse3 = rgb_f4 + t_f4
+        fuse_f4 = self.fuse_block4(rgb_f4, t_f4)
+        # fuse3 = rgb_f4 + t_f4
         
-        neckout1, neckout2, neckout3 = self.neck_block(fuse1, fuse2, fuse3)
+        neckout1, neckout2, neckout3 = self.neck_block(fuse_f2, fuse_f3, fuse_f4)
         res = self.detect_block([neckout1, neckout2, neckout3])
         return res
 
 
-# class rgbt_Mamba(nn.Module):
-#     def __init__(self, ch, patch_size=16, 
-#                  depths=[2, 2, 6, 2], dims=[96, 192, 384, 768], 
-#                  drop_rate=0., attn_drop_rate=0., drop_path_rate=0.1, patch_norm=True, norm_layer=nn.LayerNorm,
-#                  gd=1.0, gw=1.0, last_ch=1024, nc=2, training=False) -> None:
-#         super().__init__()
-#         self.gd = gd
-#         self.gw = gw
-#         self.nc = nc
+class rgbt_Mamba(nn.Module):
+    def __init__(self, ch, patch_size=4, 
+                 depths=[2, 2, 6, 2], dims=[96, 192, 384, 768], 
+                 drop_rate=0., attn_drop_rate=0., drop_path_rate=0.1, patch_norm=True, norm_layer=nn.LayerNorm,
+                 gd=1.0, gw=1.0, last_ch=768, nc=2, training=False) -> None:
+        super().__init__()
+        self.gd = gd
+        self.gw = gw
+        self.nc = nc
 
-#         self.patchembd = PatchEmbed2D(patch_size=patch_size, in_chans=ch, embed_dim=dims[0],
-#             norm_layer=norm_layer if patch_norm else None)
-#         self.pos_drop = nn.Dropout(p=drop_rate)
-#         dpr = [x.item() for x in torch.linspace(0, drop_path_rate, sum(depths))]  # stochastic depth decay rule
+        self.patchembd = PatchEmbed2D(patch_size=patch_size, in_chans=ch, embed_dim=dims[0],
+            norm_layer=norm_layer if patch_norm else None)
+        self.pos_drop = nn.Dropout(p=drop_rate)
+        dpr = [x.item() for x in torch.linspace(0, drop_path_rate, sum(depths))]  # stochastic depth decay rule
         
-#         self.layers=nn.ModuleList()
-#         for i in range(len(depths)):
-#             layer = mamba_backbone_block(dim=dims[i],
-#                                          depth=depths[i],
-#                                          mamba_drop = attn_drop_rate,
-#                                          drop_path=dpr[sum(depths[:i]):sum(depths[:i + 1])],
-#                                          norm_layer=norm_layer, # nn.LN
-#                                          downsample=PatchMerging2D if (i < len(depths) - 1) else None)
-#             self.layers.append(layer)
-#         self.neck_block = Yolov5Neck(last_ch, n=3, gd=self.gd, gw=self.gw, last_ch=last_ch)
-#         self.anchors=[[10,13, 16,30, 33,23], [30,61, 62,45, 59,119], [116,90, 156,198, 373,326]]
-#         self.detect_block = Yolov5DetectHead(nc, self.anchors, 
-#                                              ch=[int(last_ch/4*self.gw), 
-#                                                  int(last_ch/2*self.gw), 
-#                                                  int(last_ch*self.gw)], 
-#                                                  training=training)
+        self.layers=nn.ModuleList()
+        for i in range(len(depths)):
+            layer = mamba_backbone_block(dim=dims[i],
+                                         depth=depths[i],
+                                         mamba_drop = attn_drop_rate,
+                                         drop_path=dpr[sum(depths[:i]):sum(depths[:i + 1])],
+                                         norm_layer=norm_layer, # nn.LN
+                                         downsample=PatchMerging2D if (i < len(depths) - 1) else None)
+            self.layers.append(layer)
+        self.neck_block = Yolov5Neck(last_ch, n=3, gd=self.gd, gw=self.gw, last_ch=last_ch)
+        self.anchors=[[10,13, 16,30, 33,23], [30,61, 62,45, 59,119], [116,90, 156,198, 373,326]]
+        self.detect_block = Yolov5DetectHead(nc, self.anchors, 
+                                             ch=[int(last_ch/4*self.gw), 
+                                                 int(last_ch/2*self.gw), 
+                                                 int(last_ch*self.gw)], 
+                                                 training=training)
 
-#     def gw_div(self, x):
-#         divisor = 8 
-#         x *= self.gw
-#         return int(math.ceil(x / divisor) * divisor)
+    def gw_div(self, x):
+        divisor = 8 
+        x *= self.gw
+        return int(math.ceil(x / divisor) * divisor)
     
-#     def forward(self, rgb, t):
-#         fuse_list = []
-#         rgb_token = self.patchembd(rgb)
-#         t_token = self.patchembd(t)
-#         # fuse_token = torch.cat((rgb_token, t_token), 1)
-#         fuse_token = rgb_token + t_token
-
-#         for layer in self.layers:
-#             fuse_out = layer(fuse_token)
-#             # fuse_out += fuse_token
-#             fuse = fuse_out.permute(0, 3, 1, 2).contiguous()
-#             fuse_list.append(fuse)
-#             fuse_token = fuse_out
-#         neckout1, neckout2, neckout3 = self.neck_block(fuse_list[1], fuse_list[2], fuse_list[3])
-#         res = self.detect_block([neckout1, neckout2, neckout3])
-#         return res
+    def forward(self, rgb, t):
+        fuse_list = []
+        rgb_token = self.patchembd(rgb)
+        t_token = self.patchembd(t)
+        # fuse_token = torch.cat((rgb_token, t_token), 1)
+        fuse_token = rgb_token + t_token
+        fuse_token = fuse_token.permute(0, 3, 1, 2)
+        for layer in self.layers:
+            fuse_token, fuse_out = layer(fuse_token)
+            # fuse_out += fuse_token
+            fuse = fuse_out
+            fuse_list.append(fuse.contiguous())
+            if fuse_token is not None :
+                fuse_token = fuse_token.permute(0, 3, 1, 2) # _out.permute(0, 3, 1, 2)
+        neckout1, neckout2, neckout3 = self.neck_block(fuse_list[1], fuse_list[2], fuse_list[3])
+        res = self.detect_block([neckout1, neckout2, neckout3])
+        return res
 
 
 class rgbt_replknet(nn.Module):
@@ -700,21 +703,23 @@ class rgbt_RTDETR(nn.Module):
         
         rgb_f2 = self.rgb_block2(rgb_f1 + fuse_f1)
         t_f2 = self.t_block2(t_f1 + fuse_f1)
-        fuse1 = rgb_f2 + t_f2
+        # fuse1 = rgb_f2 + t_f2
         fuse_f2 = self.fuse_block2(rgb_f2, t_f2)
         
         rgb_f3 = self.rgb_block3(rgb_f2 + fuse_f2)
         t_f3 = self.t_block3(t_f2 + fuse_f2)
-        fuse2 = rgb_f3 + t_f3
+        # fuse2 = rgb_f3 + t_f3
         fuse_f3 = self.fuse_block3(rgb_f3, t_f3)
         
         rgb_f4 = self.rgb_block4(rgb_f3 + fuse_f3)
         t_f4 = self.t_block4(t_f3 + fuse_f3)
-        rgb_f4 = self.rgb_sppf(rgb_f4)
-        t_f4 = self.t_sppf(t_f4)
-        fuse3 = rgb_f4 + t_f4
+        rgb_f4 = self.rgb_sppf(rgb_f4) #  + fuse_f4
+        t_f4 = self.t_sppf(t_f4 ) # + fuse_f4
+        fuse_f4 = self.fuse_block4(rgb_f4, t_f4)
+
+        # fuse3 = rgb_f4 + t_f4
         
-        neckout1, neckout2, neckout3 = self.neck_block(fuse1, fuse2, fuse3)
+        neckout1, neckout2, neckout3 = self.neck_block(fuse_f2, fuse_f3, fuse_f4)
         res = self.detect_block([neckout1, neckout2, neckout3])
         return res
 
@@ -734,6 +739,8 @@ def rgbtmodel_factory(model_name='rgbt_yolov5',ch=3, nc=1, gd=0.33, gw=0.5, trai
         return rgbt_unireplknet(ch, num_classes=nc, dims=(128, 256, 512, 1024), depths=(2, 2, 8, 2), attempt_use_lk_impl=True)
     elif model_name == 'rgbt_rtdetr':
         return rgbt_RTDETR(ch=ch, nc=nc, gd=gd, gw=gw, training=True)
+    elif model_name == 'rgbt_mamba':
+        return rgbt_Mamba(ch=ch, nc=nc, training=True)
     else :
         raise ValueError("unsupported model_name!:{}".format(model_name))
 

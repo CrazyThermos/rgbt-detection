@@ -45,7 +45,7 @@ from utils.general import (LOGGER, TQDM_BAR_FORMAT, check_dataset, check_img_siz
 from utils.metrics import ConfusionMatrix, ap_per_class, box_iou
 from utils.plots import output_to_target, plot_images # plot_val_study
 from utils.torch_utils import select_device, smart_inference_mode
-from model.frame import RGBTModel, rgbtmodel_factory
+# from model.frame import RGBTModel, rgbtmodel_factory
 
 def save_one_txt(predn, save_conf, shape, file):
     # Save one txt result

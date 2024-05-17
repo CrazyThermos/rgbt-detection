@@ -298,6 +298,8 @@ def attempt_load(model_name, weights, device, training=True):
         model_name = 'rgbt_yolov5'
     model = rgbtmodel_factory(model_name=model_name,ch=3, nc=ckpt.nc, gd=ckpt.gd, gw=ckpt.gw, training=training).to(device)
     model.names = ckpt.names
+    # model.names = {  0: 'car', 1: 'person'}
+
     ckpt = intersect_dicts(ckpt.state_dict(), model.state_dict(), exclude=[])
     model.load_state_dict(ckpt, strict=True)
     return model

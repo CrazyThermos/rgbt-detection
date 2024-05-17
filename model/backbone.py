@@ -5,7 +5,8 @@ from torchvision.transforms import transforms
 
 from model.common import C3, Conv, SPPF
 from model.mamba import Mamba, MambaConfig, PatchMerge, RMSNorm
-from model.vmamba import *
+from model.vmamba import VSSBlock
+from model.light_mamba import Light_VSSBlock
 # YOLOv5 v6.0 backbone
 '''
 backbone:
@@ -103,14 +104,19 @@ class mamba_backbone_block(nn.Module):
     ) -> None:
         super().__init__()
         self.layers = nn.ModuleList([
-            VSSBlock(
+            Light_VSSBlock(
                 hidden_dim=dim,   # 96
                 drop_path=drop_path[i],  # 0.2
                 norm_layer=norm_layer,  # nn.LN
-                mamba_drop_rate=mamba_drop, # 0 
                 d_state=d_state,  # 16
             ) for i in range(depth)])
-
+        # self.layers = nn.ModuleList([
+        #     VSSBlock(
+        #         hidden_dim=dim,   # 96
+        #         drop_path=drop_path[i],  # 0.2
+        #         norm_layer=norm_layer,  # nn.LN
+        #         d_state=d_state,  # 16
+        #     ) for i in range(depth)])
         if downsample is not None:
             self.downsample = downsample(dim=dim, norm_layer=norm_layer)
         else:
@@ -119,6 +125,9 @@ class mamba_backbone_block(nn.Module):
     def forward(self, x):
         for layer in self.layers:
             x = layer(x)
+        
         if self.downsample is not None:
-            x = self.downsample(x)            
-        return x
+            x_ = self.downsample(x.permute(0, 2, 3, 1))            
+        else:
+            x_ = None
+        return (x_, x)
