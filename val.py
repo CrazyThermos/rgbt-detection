@@ -126,6 +126,7 @@ def run(
         plots=True,
         callbacks=Callbacks(),
         compute_loss=None,
+        use_decoder=False
 ):
     # Initialize/load model and set device
     training = model is not None
@@ -216,10 +217,15 @@ def run(
         t_nb, _, t_height, t_width = im_t.shape  # batch size, channels, height, width
         # Inference
         # with dt[1]:
+        # if use_decoder:
+        #     (preds, train_out), fuse = model(im_rgb, im_t) if compute_loss else (model(im_rgb, im_t, augment=augment), None)
+        # else:
         preds, train_out = model(im_rgb, im_t) if compute_loss else (model(im_rgb, im_t, augment=augment), None)
 
-        # Loss
+        # Loss  and use_decoder
         if compute_loss:
+        #     loss += compute_loss(train_out, targets, (fuse, im_rgb, im_t))[1]  # box, obj, cls
+        # else:
             loss += compute_loss(train_out, targets)[1]  # box, obj, cls
             pass
 

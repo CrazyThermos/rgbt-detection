@@ -319,8 +319,13 @@ def train(hyp, opt, device, callbacks):  # hyp is path/to/hyp.yaml or hyp dictio
             # Forward
             torch.use_deterministic_algorithms(True, warn_only=True)
             with torch.cuda.amp.autocast(amp):
-                pred = model(img_rgb, img_t)  # forward
-                loss, loss_items = compute_loss(pred, targets.to(device))  # loss scaled by batch_size
+                fuse = None
+                if opt.use_decoder:
+                    pred, fuse = model(img_rgb, img_t)  # forward
+                    loss, loss_items = compute_loss(pred, targets.to(device), (fuse, img_rgb, img_t))  # loss scaled by batch_size
+                else:
+                    pred = model(img_rgb, img_t)  # forward
+                    loss, loss_items = compute_loss(pred, targets.to(device))  # loss scaled by batch_size
                 if RANK != -1:
                     loss *= WORLD_SIZE  # gradient averaged between devices in DDP mode
                 if opt.quad:
@@ -378,7 +383,8 @@ def train(hyp, opt, device, callbacks):  # hyp is path/to/hyp.yaml or hyp dictio
                                                 save_dir=save_dir,
                                                 plots=True,
                                                 callbacks=callbacks,
-                                                compute_loss=compute_loss)
+                                                compute_loss=compute_loss,
+                                                use_decoder=opt.use_decoder)
 
             # Update best mAP
             fi = fitness(np.array(results).reshape(1, -1))  # weighted combination of [P, R, mAP@.5, mAP@.5-.95]
@@ -487,7 +493,8 @@ def parse_opt(known=False):
     parser.add_argument('--epochs', type=int, default=100, help='total training epochs')
     parser.add_argument('--batch-size', type=int, default=16, help='total batch size for all GPUs, -1 for autobatch')
     parser.add_argument('--imgsz', '--img', '--img-size', type=int, default=640, help='train, val image size (pixels)')
-    parser.add_argument('--model-name', type=str, default='rgbt_yolov5', help='train, val image size (pixels)')
+    parser.add_argument('--model-name', type=str, default='rgbt_yolov5', help='model name for traing')
+    parser.add_argument('--use-decoder', action='store_true', help='use decoder loss')
     parser.add_argument('--rect', action='store_true', help='rectangular training')
     parser.add_argument('--resume', nargs='?', const=True, default=False, help='resume most recent training')
     parser.add_argument('--nosave', action='store_true', help='only save final checkpoint')

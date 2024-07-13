@@ -21,44 +21,27 @@ class ConvBnTanh2d(nn.Module):
         return torch.tanh(self.conv(x))/2+0.5
     
 class FusionDecoder(nn.Module):
-    def __init__(self, output = 1):
+    def __init__(self, ch=1024):
         super(FusionDecoder, self).__init__()
-        vis_ch = [16,32,48]
-        inf_ch = [16,32,48]
-        # output=1
-        # self.vis_conv = ConvLeakyRelu2d(output, vis_ch[0])
-        # self.vis_grm1 = GRM(vis_ch[0], vis_ch[1])
-        # self.vis_grm2 = GRM(vis_ch[1], vis_ch[2])
-        # self.vis_se = SEBlock(vis_ch[2])
+        vis_ch = [ch//4,ch//2,ch]
 
-        # self.inf_conv = ConvLeakyRelu2d(output, inf_ch[0])
-        # self.inf_grm1 = GRM(inf_ch[0], inf_ch[1])
-        # self.inf_grm2 = GRM(inf_ch[1], inf_ch[2])
-        # self.inf_se = SEBlock(inf_ch[2])
+        self.upsample4 = nn.Upsample(scale_factor=2)
+        self.upsample3 = nn.Upsample(scale_factor=2)
+        self.upsample2 = nn.Upsample(scale_factor=2)
+        self.upsample1 = nn.Upsample(scale_factor=2)
 
-        self.decode4 = ConvBnLeakyRelu2d(vis_ch[2]+inf_ch[2], vis_ch[1]+vis_ch[1])
-        self.decode3 = ConvBnLeakyRelu2d(vis_ch[1]+inf_ch[1], vis_ch[0]+inf_ch[0])
-        self.decode2 = ConvBnLeakyRelu2d(vis_ch[0]+inf_ch[0], vis_ch[0])
-        self.decode1 = ConvBnTanh2d(vis_ch[0], output)
+        self.decode4 = ConvBnLeakyRelu2d(vis_ch[2], vis_ch[1])
+        self.decode3 = ConvBnLeakyRelu2d(vis_ch[1], vis_ch[0])
+        self.decode2 = ConvBnLeakyRelu2d(vis_ch[0], vis_ch[0])
+        self.decode1 = ConvBnTanh2d(vis_ch[0], 3)
         
-    def forward(self, feature_vis, feature_ir):
-        # split data into RGB and INF
-        # x_vis_origin = image_vis
-        # x_inf_origin = image_ir
-        # encode
-        # x_vis_p=self.vis_conv(x_vis_origin)
-        # x_vis_p1=self.vis_grm1(x_vis_p)
-        # x_vis_p2=self.vis_grm2(x_vis_p1)
-        # x_vis_p2=self.vis_se(x_vis_p2)
-
-        # x_inf_p=self.inf_conv(x_inf_origin)
-        # x_inf_p1=self.inf_grm1(x_inf_p)
-        # x_inf_p2=self.inf_grm2(x_inf_p1)
-        # x_inf_p2=self.inf_se(x_inf_p2)
-
+    def forward(self, x):
         # decode
-        x=self.decode4(torch.cat((feature_vis, feature_ir),dim=1))
+        x=self.upsample4(x)
+        x=self.decode4(x)
+        x=self.upsample3(x)
         x=self.decode3(x)
+        x=self.upsample2(x)
         x=self.decode2(x)
         x=self.decode1(x)
         return x

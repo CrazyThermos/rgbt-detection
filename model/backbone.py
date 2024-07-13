@@ -4,9 +4,9 @@ import torch.nn as nn
 from torchvision.transforms import transforms
 
 from model.common import C3, Conv, SPPF
-from model.mamba import Mamba, MambaConfig, PatchMerge, RMSNorm
-from model.vmamba import VSSBlock
-from model.light_mamba import Light_VSSBlock
+from model.mamba.mamba import Mamba, MambaConfig, PatchMerge, RMSNorm
+from model.mamba.vmamba import VSSBlock
+from model.mamba.light_mamba import Light_VSSBlock
 # YOLOv5 v6.0 backbone
 '''
 backbone:

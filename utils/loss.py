@@ -116,6 +116,7 @@ class GradientLoss(nn.Module):
         G_F = self.differentiate(Fuse)
 
         GT = torch.where(torch.abs(G_T1) > torch.abs(G_T2), G_T1, G_T2)
+        # GT = F.interpolate(GT, scale_factor=0.125)
         loss = self.mse(G_F, GT)
 
         return loss
@@ -146,18 +147,22 @@ class ComputeLoss:
         self.balance = {3: [4.0, 1.0, 0.4]}.get(m.nl, [4.0, 1.0, 0.25, 0.06, 0.02])  # P3-P7
         self.ssi = list(m.stride).index(16) if autobalance else 0  # stride 16 index
         self.BCEcls, self.BCEobj, self.gr, self.hyp, self.autobalance = BCEcls, BCEobj, 1.0, h, autobalance
+        self.FUSEloss = GradientLoss().to(device=device)
         self.na = m.na  # number of anchors
         self.nc = m.nc  # number of classes
         self.nl = m.nl  # number of layers
         self.anchors = m.anchors
         self.device = device
 
-    def __call__(self, p, targets):  # predictions, targets
+    def __call__(self, p, targets, fi=None):  # predictions, targets
         lcls = torch.zeros(1, device=self.device)  # class loss
         lbox = torch.zeros(1, device=self.device)  # box loss
         lobj = torch.zeros(1, device=self.device)  # object loss
         tcls, tbox, indices, anchors = self.build_targets(p, targets)  # targets
-
+        lfuse = 0.0
+        if fi is not None:
+            fuse, rgb, t = fi
+            lfuse = self.FUSEloss(fuse, rgb, t)
         # Losses
         for i, pi in enumerate(p):  # layer index, layer predictions
             b, a, gj, gi = indices[i]  # image, anchor, gridy, gridx
@@ -206,7 +211,7 @@ class ComputeLoss:
         lcls *= self.hyp['cls']
         bs = tobj.shape[0]  # batch size
 
-        return (lbox + lobj + lcls) * bs, torch.cat((lbox, lobj, lcls)).detach()
+        return (lbox + lobj + lcls + lfuse) * bs, torch.cat((lbox, lobj, lcls)).detach()
 
     def build_targets(self, p, targets):
         # Build targets for compute_loss(), input targets(image,class,x,y,w,h)

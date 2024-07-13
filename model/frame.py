@@ -1,14 +1,15 @@
 import math
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 from model.common import Conv, SPPF
 from model.backbone import yolov5_backbone_block, mamba_backbone_block
 from model.neck import Yolov5Neck, RTDETRNeck
 from model.head import Yolov5DetectHead
-from model.fuseblock import fuse_block_conv1x1,fuse_block_AFF,fuse_block_CA
-from model.mamba import PatchEmbed, PatchMerge
-from model.vmamba import PatchEmbed2D, PatchMerging2D
+from model.fuseblock import fuse_block_conv1x1,fuse_block_AFF,fuse_block_CA,fuse_block_CA_v2,fuse_block_CA_v3
+from model.mamba.mamba import PatchEmbed, PatchMerge
+from model.mamba.vmamba import PatchEmbed2D, PatchMerging2D
 from model.unireplknet import UniRepLKNetBlock, LayerNorm, partial
 from model.replknet import enable_sync_bn, conv_bn_relu, fuse_bn, get_conv2d, get_bn, checkpoint, RepLKNetStage
 from model.decoder import FusionDecoder
@@ -45,9 +46,13 @@ class rgbt_yolov5(nn.Module):
         self.fuse_block3 = fuse_block_conv1x1(self.gw_div(last_ch//2))
         self.fuse_block4 = fuse_block_conv1x1(self.gw_div(last_ch))
     
+        self.training = training
+        self.f3_conv1x1 = nn.Conv2d(self.gw_div(last_ch), self.gw_div(last_ch//4),(1,1))
+        self.f2_conv1x1 = nn.Conv2d(self.gw_div(last_ch//2), self.gw_div(last_ch//4),(1,1))
+
         self.neck_block = Yolov5Neck(last_ch, n=3, gd=self.gd, gw=self.gw, last_ch=last_ch)
         self.anchors=[[10,13, 16,30, 33,23], [30,61, 62,45, 59,119], [116,90, 156,198, 373,326]]
-        self.detect_block = Yolov5DetectHead(nc, self.anchors, ch=[int(last_ch/4*self.gw), int(last_ch/2*self.gw), int(last_ch*self.gw)], training=training)
+        self.detect_block = Yolov5DetectHead(nc, self.anchors, ch=[int(last_ch/4*self.gw), int(last_ch/2*self.gw), int(last_ch*self.gw)], training=self.training)
 
     def gw_div(self, x):
         divisor = 8 
@@ -74,10 +79,85 @@ class rgbt_yolov5(nn.Module):
         rgb_f4 = self.rgb_sppf(rgb_f4)
         t_f4 = self.t_sppf(t_f4)
         fuse3 = rgb_f4 + t_f4
-        
+
         neckout1, neckout2, neckout3 = self.neck_block(fuse1, fuse2, fuse3)
         res = self.detect_block([neckout1, neckout2, neckout3])
+
         return res
+    
+
+class rgbt_yolov5_decoder(nn.Module):
+    def __init__(self, ch, gd=1.0, gw=1.0, last_ch=1024, nc=2, training=False) -> None:
+        super().__init__()
+        self.gd = gd
+        self.gw = gw
+        self.nc = nc
+        self.rgb_conv_1 = Conv(ch, self.gw_div(last_ch//16), 6, 2, 2)
+        self.rgb_block1 = yolov5_backbone_block(last_ch//16, last_ch//8, n=3, gd=gd, gw=gw)
+        self.rgb_block2 = yolov5_backbone_block(last_ch//8, last_ch//4, n=6, gd=gd, gw=gw)
+        self.rgb_block3 = yolov5_backbone_block(last_ch//4, last_ch//2, n=9, gd=gd, gw=gw)
+        self.rgb_block4 = yolov5_backbone_block(last_ch//2, last_ch, n=3, gd=gd, gw=gw)
+        self.rgb_sppf   = SPPF(self.gw_div(last_ch), self.gw_div(last_ch), 5)
+
+        self.t_conv_1 = Conv(ch, self.gw_div(last_ch//16), 6, 2, 2)
+        self.t_block1 = yolov5_backbone_block(last_ch//16, last_ch//8, n=3, gd=gd, gw=gw)
+        self.t_block2 = yolov5_backbone_block(last_ch//8, last_ch//4, n=6, gd=gd, gw=gw)
+        self.t_block3 = yolov5_backbone_block(last_ch//4, last_ch//2, n=9, gd=gd, gw=gw)
+        self.t_block4 = yolov5_backbone_block(last_ch//2, last_ch, n=3, gd=gd, gw=gw)
+        self.t_sppf   = SPPF(self.gw_div(1024), self.gw_div(1024), 5)
+
+        self.fuse_block1 = fuse_block_conv1x1(self.gw_div(last_ch//8))
+        self.fuse_block2 = fuse_block_conv1x1(self.gw_div(last_ch//4))
+        self.fuse_block3 = fuse_block_conv1x1(self.gw_div(last_ch//2))
+        self.fuse_block4 = fuse_block_conv1x1(self.gw_div(last_ch))
+    
+        self.training = training
+        self.f3_conv1x1 = nn.Conv2d(self.gw_div(last_ch), self.gw_div(last_ch//4),(1,1))
+        self.f2_conv1x1 = nn.Conv2d(self.gw_div(last_ch//2), self.gw_div(last_ch//4),(1,1))
+
+        self.decoder = FusionDecoder(self.gw_div(last_ch//4))
+
+        self.neck_block = Yolov5Neck(last_ch, n=3, gd=self.gd, gw=self.gw, last_ch=last_ch)
+        self.anchors=[[10,13, 16,30, 33,23], [30,61, 62,45, 59,119], [116,90, 156,198, 373,326]]
+        self.detect_block = Yolov5DetectHead(nc, self.anchors, ch=[int(last_ch/4*self.gw), int(last_ch/2*self.gw), int(last_ch*self.gw)], training=self.training)
+
+    def gw_div(self, x):
+        divisor = 8 
+        x *= self.gw
+        return int(math.ceil(x / divisor) * divisor)
+    
+    def forward(self, rgb, t):
+        rgb_f1 = self.rgb_block1(self.rgb_conv_1(rgb))
+        t_f1 = self.t_block1(self.t_conv_1(t))
+        fuse_f1 = self.fuse_block1(rgb_f1, t_f1)
+        
+        rgb_f2 = self.rgb_block2(rgb_f1 + fuse_f1)
+        t_f2 = self.t_block2(t_f1 + fuse_f1)
+        fuse1 = rgb_f2 + t_f2
+        fuse_f2 = self.fuse_block2(rgb_f2, t_f2)
+        
+        rgb_f3 = self.rgb_block3(rgb_f2 + fuse_f2)
+        t_f3 = self.t_block3(t_f2 + fuse_f2)
+        fuse2 = rgb_f3 + t_f3
+        fuse_f3 = self.fuse_block3(rgb_f3, t_f3)
+        
+        rgb_f4 = self.rgb_block4(rgb_f3 + fuse_f3)
+        t_f4 = self.t_block4(t_f3 + fuse_f3)
+        rgb_f4 = self.rgb_sppf(rgb_f4)
+        t_f4 = self.t_sppf(t_f4)
+        fuse3 = rgb_f4 + t_f4
+        if self.training:
+            decoder1 = fuse1
+            # decoder2 = F.interpolate(self.f2_conv1x1(fuse2), size=(80, 80), mode='bilinear', align_corners=False)
+            # decoder3 = F.interpolate(self.f3_conv1x1(fuse3), size=(80, 80), mode='bilinear', align_corners=False)
+
+            decoder_out = self.decoder(decoder1)
+        neckout1, neckout2, neckout3 = self.neck_block(fuse1, fuse2, fuse3)
+        res = self.detect_block([neckout1, neckout2, neckout3])
+        if self.training:
+            return res, decoder_out
+        return res
+
 
 
 class rgbt_yolov5_AFF(nn.Module):
@@ -723,9 +803,196 @@ class rgbt_RTDETR(nn.Module):
         res = self.detect_block([neckout1, neckout2, neckout3])
         return res
 
+
+class rgbt_CA_RTDETR(nn.Module):
+    def __init__(self, ch, gd=1.0, gw=1.0, last_ch=1024, nc=6, training=False) -> None:
+        super().__init__()
+        self.gd = gd
+        self.gw = gw
+        self.nc = nc
+        self.rgb_conv_1 = Conv(ch, self.gw_div(last_ch//16), 6, 2, 2)
+        self.rgb_block1 = yolov5_backbone_block(last_ch//16, last_ch//8, n=3, gd=gd, gw=gw)
+        self.rgb_block2 = yolov5_backbone_block(last_ch//8, last_ch//4, n=6, gd=gd, gw=gw)
+        self.rgb_block3 = yolov5_backbone_block(last_ch//4, last_ch//2, n=9, gd=gd, gw=gw)
+        self.rgb_block4 = yolov5_backbone_block(last_ch//2, last_ch, n=3, gd=gd, gw=gw)
+        self.rgb_sppf   = SPPF(self.gw_div(last_ch), self.gw_div(last_ch), 5)
+
+        self.t_conv_1 = Conv(ch, self.gw_div(last_ch//16), 6, 2, 2)
+        self.t_block1 = yolov5_backbone_block(last_ch//16, last_ch//8, n=3, gd=gd, gw=gw)
+        self.t_block2 = yolov5_backbone_block(last_ch//8, last_ch//4, n=6, gd=gd, gw=gw)
+        self.t_block3 = yolov5_backbone_block(last_ch//4, last_ch//2, n=9, gd=gd, gw=gw)
+        self.t_block4 = yolov5_backbone_block(last_ch//2, last_ch, n=3, gd=gd, gw=gw)
+        self.t_sppf   = SPPF(self.gw_div(1024), self.gw_div(1024), 5)
+
+        self.fuse_block1 = fuse_block_CA(self.gw_div(last_ch//8))
+        self.fuse_block2 = fuse_block_CA(self.gw_div(last_ch//4))
+        self.fuse_block3 = fuse_block_CA(self.gw_div(last_ch//2))
+        self.fuse_block4 = fuse_block_CA(self.gw_div(last_ch))
+    
+        self.neck_block = RTDETRNeck(last_ch, n=3, gd=self.gd, gw=self.gw, last_ch=last_ch)
+        self.anchors=[[10,13, 16,30, 33,23], [30,61, 62,45, 59,119], [116,90, 156,198, 373,326]]
+        self.detect_block = Yolov5DetectHead(nc, self.anchors, ch=[int(last_ch/4*self.gw), int(last_ch/4*self.gw), int(last_ch/4*self.gw)], training=training)
+
+    def gw_div(self, x):
+        divisor = 8 
+        x *= self.gw
+        return int(math.ceil(x / divisor) * divisor)
+    
+    def forward(self, rgb, t):
+        rgb_f1 = self.rgb_block1(self.rgb_conv_1(rgb))
+        t_f1 = self.t_block1(self.t_conv_1(t))
+        fuse_f1 = self.fuse_block1(rgb_f1, t_f1)
+        
+        rgb_f2 = self.rgb_block2(rgb_f1 + fuse_f1)
+        t_f2 = self.t_block2(t_f1 + fuse_f1)
+        # fuse1 = rgb_f2 + t_f2
+        fuse_f2 = self.fuse_block2(rgb_f2, t_f2)
+        
+        rgb_f3 = self.rgb_block3(rgb_f2 + fuse_f2)
+        t_f3 = self.t_block3(t_f2 + fuse_f2)
+        # fuse2 = rgb_f3 + t_f3
+        fuse_f3 = self.fuse_block3(rgb_f3, t_f3)
+        
+        rgb_f4 = self.rgb_block4(rgb_f3 + fuse_f3)
+        t_f4 = self.t_block4(t_f3 + fuse_f3)
+        rgb_f4 = self.rgb_sppf(rgb_f4) #  + fuse_f4
+        t_f4 = self.t_sppf(t_f4 ) # + fuse_f4
+        fuse_f4 = self.fuse_block4(rgb_f4, t_f4)
+
+        # fuse3 = rgb_f4 + t_f4
+        neckout1, neckout2, neckout3 = self.neck_block(fuse_f2, fuse_f3, fuse_f4)
+        res = self.detect_block([neckout1, neckout2, neckout3])
+        return res
+    
+
+class rgbt_CA_RTDETRv2(nn.Module):
+    def __init__(self, ch, gd=1.0, gw=1.0, last_ch=1024, nc=6, training=False) -> None:
+        super().__init__()
+        self.gd = gd
+        self.gw = gw
+        self.nc = nc
+        self.rgb_conv_1 = Conv(ch, self.gw_div(last_ch//16), 6, 2, 2)
+        self.rgb_block1 = yolov5_backbone_block(last_ch//16, last_ch//8, n=3, gd=gd, gw=gw)
+        self.rgb_block2 = yolov5_backbone_block(last_ch//8, last_ch//4, n=6, gd=gd, gw=gw)
+        self.rgb_block3 = yolov5_backbone_block(last_ch//4, last_ch//2, n=9, gd=gd, gw=gw)
+        self.rgb_block4 = yolov5_backbone_block(last_ch//2, last_ch, n=3, gd=gd, gw=gw)
+        self.rgb_sppf   = SPPF(self.gw_div(last_ch), self.gw_div(last_ch), 5)
+
+        self.t_conv_1 = Conv(ch, self.gw_div(last_ch//16), 6, 2, 2)
+        self.t_block1 = yolov5_backbone_block(last_ch//16, last_ch//8, n=3, gd=gd, gw=gw)
+        self.t_block2 = yolov5_backbone_block(last_ch//8, last_ch//4, n=6, gd=gd, gw=gw)
+        self.t_block3 = yolov5_backbone_block(last_ch//4, last_ch//2, n=9, gd=gd, gw=gw)
+        self.t_block4 = yolov5_backbone_block(last_ch//2, last_ch, n=3, gd=gd, gw=gw)
+        self.t_sppf   = SPPF(self.gw_div(1024), self.gw_div(1024), 5)
+
+        self.fuse_block1 = fuse_block_CA_v2(self.gw_div(last_ch//8))
+        self.fuse_block2 = fuse_block_CA_v2(self.gw_div(last_ch//4))
+        self.fuse_block3 = fuse_block_CA_v2(self.gw_div(last_ch//2))
+        self.fuse_block4 = fuse_block_CA_v2(self.gw_div(last_ch))
+    
+        self.neck_block = RTDETRNeck(last_ch, n=3, gd=self.gd, gw=self.gw, last_ch=last_ch)
+        self.anchors=[[10,13, 16,30, 33,23], [30,61, 62,45, 59,119], [116,90, 156,198, 373,326]]
+        self.detect_block = Yolov5DetectHead(nc, self.anchors, ch=[int(last_ch/4*self.gw), int(last_ch/4*self.gw), int(last_ch/4*self.gw)], training=training)
+
+    def gw_div(self, x):
+        divisor = 8 
+        x *= self.gw
+        return int(math.ceil(x / divisor) * divisor)
+    
+    def forward(self, rgb, t):
+        rgb_f1 = self.rgb_block1(self.rgb_conv_1(rgb))
+        t_f1 = self.t_block1(self.t_conv_1(t))
+        fuse_f1 = self.fuse_block1(rgb_f1, t_f1)
+        
+        rgb_f2 = self.rgb_block2(rgb_f1 + fuse_f1)
+        t_f2 = self.t_block2(t_f1 + fuse_f1)
+        # fuse1 = rgb_f2 + t_f2
+        fuse_f2 = self.fuse_block2(rgb_f2, t_f2)
+        
+        rgb_f3 = self.rgb_block3(rgb_f2 + fuse_f2)
+        t_f3 = self.t_block3(t_f2 + fuse_f2)
+        # fuse2 = rgb_f3 + t_f3
+        fuse_f3 = self.fuse_block3(rgb_f3, t_f3)
+        
+        rgb_f4 = self.rgb_block4(rgb_f3 + fuse_f3)
+        t_f4 = self.t_block4(t_f3 + fuse_f3)
+        rgb_f4 = self.rgb_sppf(rgb_f4) #  + fuse_f4
+        t_f4 = self.t_sppf(t_f4 ) # + fuse_f4
+        fuse_f4 = self.fuse_block4(rgb_f4, t_f4)
+
+        # fuse3 = rgb_f4 + t_f4
+        neckout1, neckout2, neckout3 = self.neck_block(fuse_f2, fuse_f3, fuse_f4)
+        res = self.detect_block([neckout1, neckout2, neckout3])
+        return res
+    
+
+class rgbt_CA_RTDETRv3(nn.Module):
+    def __init__(self, ch, gd=1.0, gw=1.0, last_ch=1024, nc=6, training=False) -> None:
+        super().__init__()
+        self.gd = gd
+        self.gw = gw
+        self.nc = nc
+        self.rgb_conv_1 = Conv(ch, self.gw_div(last_ch//16), 6, 2, 2)
+        self.rgb_block1 = yolov5_backbone_block(last_ch//16, last_ch//8, n=3, gd=gd, gw=gw)
+        self.rgb_block2 = yolov5_backbone_block(last_ch//8, last_ch//4, n=6, gd=gd, gw=gw)
+        self.rgb_block3 = yolov5_backbone_block(last_ch//4, last_ch//2, n=9, gd=gd, gw=gw)
+        self.rgb_block4 = yolov5_backbone_block(last_ch//2, last_ch, n=3, gd=gd, gw=gw)
+        self.rgb_sppf   = SPPF(self.gw_div(last_ch), self.gw_div(last_ch), 5)
+
+        self.t_conv_1 = Conv(ch, self.gw_div(last_ch//16), 6, 2, 2)
+        self.t_block1 = yolov5_backbone_block(last_ch//16, last_ch//8, n=3, gd=gd, gw=gw)
+        self.t_block2 = yolov5_backbone_block(last_ch//8, last_ch//4, n=6, gd=gd, gw=gw)
+        self.t_block3 = yolov5_backbone_block(last_ch//4, last_ch//2, n=9, gd=gd, gw=gw)
+        self.t_block4 = yolov5_backbone_block(last_ch//2, last_ch, n=3, gd=gd, gw=gw)
+        self.t_sppf   = SPPF(self.gw_div(1024), self.gw_div(1024), 5)
+
+        self.fuse_block1 = fuse_block_CA_v3(self.gw_div(last_ch//8))
+        self.fuse_block2 = fuse_block_CA_v3(self.gw_div(last_ch//4))
+        self.fuse_block3 = fuse_block_CA_v3(self.gw_div(last_ch//2))
+        self.fuse_block4 = fuse_block_CA_v3(self.gw_div(last_ch))
+    
+        self.neck_block = RTDETRNeck(last_ch, n=3, gd=self.gd, gw=self.gw, last_ch=last_ch)
+        self.anchors=[[10,13, 16,30, 33,23], [30,61, 62,45, 59,119], [116,90, 156,198, 373,326]]
+        self.detect_block = Yolov5DetectHead(nc, self.anchors, ch=[int(last_ch/4*self.gw), int(last_ch/4*self.gw), int(last_ch/4*self.gw)], training=training)
+
+    def gw_div(self, x):
+        divisor = 8 
+        x *= self.gw
+        return int(math.ceil(x / divisor) * divisor)
+    
+    def forward(self, rgb, t):
+        rgb_f1 = self.rgb_block1(self.rgb_conv_1(rgb))
+        t_f1 = self.t_block1(self.t_conv_1(t))
+        fuse_f1 = self.fuse_block1(rgb_f1, t_f1)
+        
+        rgb_f2 = self.rgb_block2(rgb_f1 + fuse_f1)
+        t_f2 = self.t_block2(t_f1 + fuse_f1)
+        # fuse1 = rgb_f2 + t_f2
+        fuse_f2 = self.fuse_block2(rgb_f2, t_f2)
+        
+        rgb_f3 = self.rgb_block3(rgb_f2 + fuse_f2)
+        t_f3 = self.t_block3(t_f2 + fuse_f2)
+        # fuse2 = rgb_f3 + t_f3
+        fuse_f3 = self.fuse_block3(rgb_f3, t_f3)
+        
+        rgb_f4 = self.rgb_block4(rgb_f3 + fuse_f3)
+        t_f4 = self.t_block4(t_f3 + fuse_f3)
+        rgb_f4 = self.rgb_sppf(rgb_f4) #  + fuse_f4
+        t_f4 = self.t_sppf(t_f4 ) # + fuse_f4
+        fuse_f4 = self.fuse_block4(rgb_f4, t_f4)
+
+        # fuse3 = rgb_f4 + t_f4
+        neckout1, neckout2, neckout3 = self.neck_block(fuse_f2, fuse_f3, fuse_f4)
+        res = self.detect_block([neckout1, neckout2, neckout3])
+        return res
+    
+
+
 def rgbtmodel_factory(model_name='rgbt_yolov5',ch=3, nc=1, gd=0.33, gw=0.5, training=True) -> nn.modules :
     if model_name == 'rgbt_yolov5':
         return rgbt_yolov5(ch=ch, nc=nc, gd=gd, gw=gw, training=True)
+    elif model_name == 'rgbt_yolov5_decoder':
+        return rgbt_yolov5_decoder(ch=ch, nc=nc, gd=gd, gw=gw, training=True)
     elif model_name == 'rgbt_yolov5_aff':
         return rgbt_yolov5_AFF(ch=ch, nc=nc, gd=gd, gw=gw, training=True)
     elif model_name == 'rgbt_yolov5_ca':
@@ -739,6 +1006,10 @@ def rgbtmodel_factory(model_name='rgbt_yolov5',ch=3, nc=1, gd=0.33, gw=0.5, trai
         return rgbt_unireplknet(ch, num_classes=nc, dims=(128, 256, 512, 1024), depths=(2, 2, 8, 2), attempt_use_lk_impl=True)
     elif model_name == 'rgbt_rtdetr':
         return rgbt_RTDETR(ch=ch, nc=nc, gd=gd, gw=gw, training=True)
+    elif model_name == 'rgbt_ca_rtdetr':
+        return rgbt_CA_RTDETR(ch=ch, nc=nc, gd=gd, gw=gw, training=True)
+    elif model_name == 'rgbt_ca_rtdetrv2':
+        return rgbt_CA_RTDETRv2(ch=ch, nc=nc, gd=gd, gw=gw, training=True)
     elif model_name == 'rgbt_mamba':
         return rgbt_Mamba(ch=ch, nc=nc, training=True)
     else :

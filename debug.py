@@ -1,10 +1,12 @@
 from model.frame import *
+from model.common import attempt_load
 from model.neck import Yolov5Neck
 from model.backbone import *
 from PIL import Image
 from matplotlib import pyplot as plt
 from torchvision.transforms import transforms
 from torchvision.models.feature_extraction import get_graph_node_names, create_feature_extractor
+import torchvision.utils as vutil
 import torch
 import yaml
 import pandas as pd
@@ -37,8 +39,8 @@ if __name__ == "__main__":
     # t = cv.imread("./test_imgs/1686403336-t.png")
     # t_tensor = torch.Tensor(t).unsqueeze(0).permute(0,3,1,2)
 
-    rgb = Image.open("test_imgs/010001.jpg")
-    t   = Image.open("test_imgs/010001_ir.jpg")
+    rgb = Image.open("test_imgs/1686403336-rgb.png")
+    t   = Image.open("test_imgs/1686403336-t.png")
     rgb = transform(rgb).unsqueeze(0).to(device)
     t   = transform(t).unsqueeze(0).to(device)
 
@@ -79,6 +81,48 @@ if __name__ == "__main__":
     # plt.imsave("feature_t512.png", feature_t1024[layer[3]][0].transpose(0,1).sum(1).detach().numpy())
     # plt.imsave("feature_rgb1024.png", feature_rgb1024[layer[4]][0].transpose(0,1).sum(1).detach().numpy())
     # plt.imsave("feature_t1024.png", feature_t1024[layer[4]][0].transpose(0,1).sum(1).detach().numpy())
+
+    # if cfg == "yolov5s":   
+    #     backbone = yolov5_backbone(3,gd=0.33,gw=0.5)
+    #     print(backbone)
+    #     nodes, _ = get_graph_node_names(backbone)
+    #     # print(nodes)
+    #     layer = layer_yolov5s
+    
+    model = attempt_load('rgbt_ca_rtdetrv2', '/home/zhengyuhang/multimodal-object-detection/RGBT-Detection/runs/train/rgbt_ca_rtdetrv24_578/weights/best.pt', device='cuda', training=False)
+    # nodes, _ = get_graph_node_names(model)
+    # print(nodes)
+    # feature_rgb1024 = backbone(rgb_tensor)
+    # feature_t1024 = backbone(t_tensor)
+
+    # feature_extractor = create_feature_extractor(model, return_nodes=layer)
+    # feature = feature_extractor(rgb, t)
+    # feature_t1024 = feature_extractor(t)
+    layer_outputs = []
+    def hook(module, input, output):
+        layer_outputs.append(output)
+
+    model.rgb_block1.register_forward_hook(hook)
+    model.t_block1.register_forward_hook(hook)
+    model.fuse_block1.register_forward_hook(hook)
+
+    model.rgb_block2.register_forward_hook(hook)
+    model.t_block2.register_forward_hook(hook)
+    model.fuse_block2.register_forward_hook(hook)
+
+    model(rgb, t)
+    vutil.save_image(layer_outputs[0].cpu().sum(1).detach(), "feature_rgb_out.png", normalize=True)
+    vutil.save_image(layer_outputs[1].cpu().sum(1).detach(), "feature_t_out.png", normalize=True)
+    vutil.save_image(layer_outputs[0].cpu().sum(1).detach() + layer_outputs[1].cpu().sum(1).detach(), "feature_concat.png", normalize=True)
+    vutil.save_image(layer_outputs[2].cpu().sum(1).detach(), "feature_fuse.png", normalize=True)
+    
+    # vutil.save_image(layer_outputs[3].cpu().sum(1).detach(), "feature_rgb_out2.png", normalize=True)
+    # vutil.save_image(layer_outputs[4].cpu().sum(1).detach(), "feature_t_out2.png", normalize=True)
+    # vutil.save_image(layer_outputs[5].cpu().sum(1).detach(), "feature_fuse2.png", normalize=True)
+
+    # plt.imsave("feature_rgb_out.png", layer_outputs[0].cpu().transpose(0,1).sum(1).detach().numpy())
+    # plt.imsave("feature_t_out.png", layer_outputs[0].cpu().transpose(0,1).sum(1).detach().numpy())
+    # plt.imsave("feature_fuse.png", layer_outputs[0].cpu().transpose(0,1).sum(1).detach().numpy())
 
 
     # fusion = RGBTModel(3)
@@ -188,72 +232,72 @@ if __name__ == "__main__":
     
     
     
-    import numpy as np
-    from model.mamba import PatchEmbed, Mamba, MambaConfig
-    B, L, D, N = 16, 64, 768, 16
-    testPatchEmbed = PatchEmbed(patch_size=4, embed_dim=96, img_size=IMG_SIZE).to(device)
-    rgb_out = testPatchEmbed(rgb)
-    t_out = testPatchEmbed(t)
-    fuse_out = torch.cat((rgb_out,t_out),1).to(device)
+    # import numpy as np
+    # from model.mamba import PatchEmbed, Mamba, MambaConfig
+    # B, L, D, N = 16, 64, 768, 16
+    # testPatchEmbed = PatchEmbed(patch_size=4, embed_dim=96, img_size=IMG_SIZE).to(device)
+    # rgb_out = testPatchEmbed(rgb)
+    # t_out = testPatchEmbed(t)
+    # fuse_out = torch.cat((rgb_out,t_out),1).to(device)
 
-    # with torch.no_grad():
-    # config = MambaConfig(d_model=D, n_layers=8, d_state=N)
-    # model = Mamba(config)
-    model = rgbt_Mamba(ch=3).to(device)
+    # # with torch.no_grad():
+    # # config = MambaConfig(d_model=D, n_layers=8, d_state=N)
+    # # model = Mamba(config)
+    # model = rgbt_Mamba(ch=3).to(device)
 
-    # rgb_mamba_out = model(rgb_out)
-    # rgb_mamba_out = rgb_mamba_out.unsqueeze(3)
-    # rgb_mamba_out = rgb_mamba_out.transpose(0, 3)
-    # rgb_mamba_out = rgb_mamba_out.reshape(1, 3, IMG_SIZE, IMG_SIZE)
-    # rgb_mamba_out = rgb_mamba_out + rgb 
-    # rgb_mamba_out = rgb_mamba_out.squeeze(0)
+    # # rgb_mamba_out = model(rgb_out)
+    # # rgb_mamba_out = rgb_mamba_out.unsqueeze(3)
+    # # rgb_mamba_out = rgb_mamba_out.transpose(0, 3)
+    # # rgb_mamba_out = rgb_mamba_out.reshape(1, 3, IMG_SIZE, IMG_SIZE)
+    # # rgb_mamba_out = rgb_mamba_out + rgb 
+    # # rgb_mamba_out = rgb_mamba_out.squeeze(0)
 
-    # t_mamba_out = model(t_out)
-    # t_mamba_out = t_mamba_out.unsqueeze(3)
-    # t_mamba_out = t_mamba_out.transpose(0, 3)
-    # t_mamba_out = t_mamba_out.reshape(1, 3, IMG_SIZE, IMG_SIZE)
-    # t_mamba_out = t_mamba_out + t + t
-    # t_mamba_out = t_mamba_out.squeeze(0)
+    # # t_mamba_out = model(t_out)
+    # # t_mamba_out = t_mamba_out.unsqueeze(3)
+    # # t_mamba_out = t_mamba_out.transpose(0, 3)
+    # # t_mamba_out = t_mamba_out.reshape(1, 3, IMG_SIZE, IMG_SIZE)
+    # # t_mamba_out = t_mamba_out + t + t
+    # # t_mamba_out = t_mamba_out.squeeze(0)
 
-    fuse_mamba_out = model(rgb, t)
-    fuse_mamba_out = fuse_mamba_out.unsqueeze(3)
-    fuse_mamba_out = fuse_mamba_out.transpose(0, 3)
-    fuse_mamba_out = fuse_mamba_out.reshape(2, 3, IMG_SIZE, IMG_SIZE)
-    rgb_fuse = fuse_mamba_out[1] + t 
+    # fuse_mamba_out = model(rgb, t)
+    # fuse_mamba_out = fuse_mamba_out.unsqueeze(3)
+    # fuse_mamba_out = fuse_mamba_out.transpose(0, 3)
+    # fuse_mamba_out = fuse_mamba_out.reshape(2, 3, IMG_SIZE, IMG_SIZE)
+    # rgb_fuse = fuse_mamba_out[1] + t 
     
-    # t_mamba_out = t_mamba_out + t
-    # t_mamba_out = t_mamba_out.squeeze(0)
-    # mamba_out = rgb_mamba_out + t_mamba_out + rgb.squeeze(0)
+    # # t_mamba_out = t_mamba_out + t
+    # # t_mamba_out = t_mamba_out.squeeze(0)
+    # # mamba_out = rgb_mamba_out + t_mamba_out + rgb.squeeze(0)
     
-    p = transforms.ToPILImage(mode="RGB")
-    rgb_im = p(rgb_fuse.squeeze(0))
-    rgb_im.save('./mamba_fuse3_out.png')
     # p = transforms.ToPILImage(mode="RGB")
-    # rgb_im = p(t_mamba_out)
-    # rgb_im.save('./mamba_fuse4_out.png')
+    # rgb_im = p(rgb_fuse.squeeze(0))
+    # rgb_im.save('./mamba_fuse3_out.png')
+    # # p = transforms.ToPILImage(mode="RGB")
+    # # rgb_im = p(t_mamba_out)
+    # # rgb_im.save('./mamba_fuse4_out.png')
 
-    # from model.frame import *
-    # x = torch.randn(2, 4, 19, 19)
-    layer = rgbt_unireplknet(3, num_classes=6, dims=(128, 256, 512, 1024), depths=(3, 3, 18, 3), attempt_use_lk_impl=True).to(device)
-    # for n, p in layer.named_parameters():
-    #     if 'beta' in n:
-    #         torch.nn.init.ones_(p)
-    #     else:
-    #         torch.nn.init.normal_(p)
-    # for n, p in layer.named_buffers():
-    #     if 'running_var' in n:
-    #         print('random init var')
-    #         torch.nn.init.uniform_(p)
-    #         p.data += 2
-    #     elif 'running_mean' in n:
-    #         print('random init mean')
-    #         torch.nn.init.uniform_(p)
-    # layer.gamma.data += 0.5
-    layer.eval()
-    rgb = rgb.to(device)
-    t = t.to(device)
-    origin_y = layer(rgb, t)
-    layer.reparameterize_unireplknet()
-    eq_y = layer(rgb, t)
+    # # from model.frame import *
+    # # x = torch.randn(2, 4, 19, 19)
+    # layer = rgbt_unireplknet(3, num_classes=6, dims=(128, 256, 512, 1024), depths=(3, 3, 18, 3), attempt_use_lk_impl=True).to(device)
+    # # for n, p in layer.named_parameters():
+    # #     if 'beta' in n:
+    # #         torch.nn.init.ones_(p)
+    # #     else:
+    # #         torch.nn.init.normal_(p)
+    # # for n, p in layer.named_buffers():
+    # #     if 'running_var' in n:
+    # #         print('random init var')
+    # #         torch.nn.init.uniform_(p)
+    # #         p.data += 2
+    # #     elif 'running_mean' in n:
+    # #         print('random init mean')
+    # #         torch.nn.init.uniform_(p)
+    # # layer.gamma.data += 0.5
+    # layer.eval()
+    # rgb = rgb.to(device)
+    # t = t.to(device)
+    # origin_y = layer(rgb, t)
+    # layer.reparameterize_unireplknet()
+    # eq_y = layer(rgb, t)
 
-    print("output difference:", ((origin_y - eq_y) ** 2).mean())
+    # print("output difference:", ((origin_y - eq_y) ** 2).mean())

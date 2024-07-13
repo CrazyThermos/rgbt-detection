@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from model.mamba import PatchEmbed, Mamba, MambaConfig
+from model.mamba.mamba import PatchEmbed, Mamba, MambaConfig
 
 class fuse_block_conv1x1(nn.Module):
     def __init__(self, ch) -> None:
@@ -109,6 +109,7 @@ class fuse_block_CA(nn.Module):
 
         t_cat_conv_split_h, t_cat_conv_split_w = t_cat_conv_relu.split([h, w], 2)
 
+
         t_s_h = self.sigmoid_h(self.F_h(t_cat_conv_split_h))
         t_s_w = self.sigmoid_w(self.F_w(t_cat_conv_split_w.permute(0, 1, 3, 2)))
         
@@ -116,6 +117,135 @@ class fuse_block_CA(nn.Module):
 
         return out
     
+class fuse_block_CA_v2(nn.Module):
+    def __init__(self, ch, reduction=16):
+        super(fuse_block_CA_v2, self).__init__()
+
+        # self.h = h
+        # self.w = w
+        self.conv1x1 = nn.Conv2d(ch * 2, ch,(1,1), bias=False)
+        self.avg_pool_x1 = nn.AdaptiveAvgPool2d((None, 1))
+        self.avg_pool_y1 = nn.AdaptiveAvgPool2d((1, None))
+
+        self.avg_pool_x2 = nn.AdaptiveAvgPool2d((None, 1))
+        self.avg_pool_y2 = nn.AdaptiveAvgPool2d((1, None))
+
+        self.conv_1x1_1 = nn.Conv2d(in_channels=ch, out_channels=ch//reduction, kernel_size=1, stride=1, bias=False)
+        self.conv_1x1_2 = nn.Conv2d(in_channels=ch, out_channels=ch//reduction, kernel_size=1, stride=1, bias=False)
+
+        self.relu1 = nn.ReLU()
+        self.bn1 = nn.BatchNorm2d(ch//reduction)
+
+        self.relu2 = nn.ReLU()
+        self.bn2 = nn.BatchNorm2d(ch//reduction)
+
+        self.F_h1 = nn.Conv2d(in_channels=ch//reduction, out_channels=ch, kernel_size=1, stride=1, bias=False)
+        self.F_w1 = nn.Conv2d(in_channels=ch//reduction, out_channels=ch, kernel_size=1, stride=1, bias=False)
+        self.F_h2 = nn.Conv2d(in_channels=ch//reduction, out_channels=ch, kernel_size=1, stride=1, bias=False)
+        self.F_w2 = nn.Conv2d(in_channels=ch//reduction, out_channels=ch, kernel_size=1, stride=1, bias=False)
+
+        self.sigmoid_h1 = nn.Sigmoid()
+        self.sigmoid_w1 = nn.Sigmoid()
+        self.sigmoid_h2 = nn.Sigmoid()
+        self.sigmoid_w2 = nn.Sigmoid()
+
+
+    def forward(self, rgb, t):
+        
+        # c = rgb + t
+        c = torch.cat((rgb, t), 1)
+        c = self.conv1x1(c)
+        _, _, h, w = c.size()
+
+        rgb_h = self.avg_pool_x1(rgb)
+        rgb_w = self.avg_pool_y1(rgb).permute(0, 1, 3, 2)
+
+        rgb_cat_conv_relu = self.relu1(self.bn1(self.conv_1x1_1(torch.cat((rgb_h, rgb_w), 2))))
+
+        rgb_cat_conv_split_h, rgb_cat_conv_split_w = rgb_cat_conv_relu.split([h, w], 2)
+
+        rgb_s_h = self.sigmoid_h1(self.F_h1(rgb_cat_conv_split_h))
+        rgb_s_w = self.sigmoid_w1(self.F_w1(rgb_cat_conv_split_w.permute(0, 1, 3, 2)))
+
+        # _, _, h, w = rgb.size() 
+        t_h = self.avg_pool_x2(t)
+        t_w = self.avg_pool_y2(t).permute(0, 1, 3, 2)
+
+        t_cat_conv_relu = self.relu2(self.conv_1x1_2(torch.cat((t_h, t_w), 2)))
+
+        t_cat_conv_split_h, t_cat_conv_split_w = t_cat_conv_relu.split([h, w], 2)
+
+        t_s_h = self.sigmoid_h2(self.F_h2(t_cat_conv_split_h))
+        t_s_w = self.sigmoid_w2(self.F_w2(t_cat_conv_split_w.permute(0, 1, 3, 2)))
+        
+        out = c * (rgb_s_h * rgb_s_w + t_s_h * t_s_w)
+
+        return out
+
+
+class fuse_block_CA_v3(nn.Module):
+    def __init__(self, ch, reduction=16):
+        super(fuse_block_CA_v3, self).__init__()
+
+        # self.h = h
+        # self.w = w
+        # self.conv1x1 = nn.Conv2d(ch * 2, ch,(1,1), bias=False)
+        self.avg_pool_x1 = nn.AdaptiveAvgPool2d((None, 1))
+        self.avg_pool_y1 = nn.AdaptiveAvgPool2d((1, None))
+
+        self.avg_pool_x2 = nn.AdaptiveAvgPool2d((None, 1))
+        self.avg_pool_y2 = nn.AdaptiveAvgPool2d((1, None))
+
+        self.conv_1x1_1 = nn.Conv2d(in_channels=ch, out_channels=ch//reduction, kernel_size=1, stride=1, bias=False)
+        self.conv_1x1_2 = nn.Conv2d(in_channels=ch, out_channels=ch//reduction, kernel_size=1, stride=1, bias=False)
+
+        self.act1 = nn.SiLU()
+        self.bn1 = nn.BatchNorm2d(ch//reduction)
+
+        self.act2 = nn.SiLU()
+        self.bn2 = nn.BatchNorm2d(ch//reduction)
+
+        self.F_h1 = nn.Conv2d(in_channels=ch//reduction, out_channels=ch, kernel_size=1, stride=1, bias=False)
+        self.F_w1 = nn.Conv2d(in_channels=ch//reduction, out_channels=ch, kernel_size=1, stride=1, bias=False)
+        self.F_h2 = nn.Conv2d(in_channels=ch//reduction, out_channels=ch, kernel_size=1, stride=1, bias=False)
+        self.F_w2 = nn.Conv2d(in_channels=ch//reduction, out_channels=ch, kernel_size=1, stride=1, bias=False)
+
+        self.sigmoid_h1 = nn.Sigmoid()
+        self.sigmoid_w1 = nn.Sigmoid()
+        self.sigmoid_h2 = nn.Sigmoid()
+        self.sigmoid_w2 = nn.Sigmoid()
+
+    def forward(self, rgb, t):
+        
+        # c = rgb + t
+        # c = torch.cat((rgb, t), 1)
+        # c = self.conv1x1(c)
+        _, _, h, w = t.size()
+
+        rgb_h = self.avg_pool_x1(rgb)
+        rgb_w = self.avg_pool_y1(rgb).permute(0, 1, 3, 2)
+
+        rgb_cat_conv_relu = self.act1(self.bn1(self.conv_1x1_1(torch.cat((rgb_h, rgb_w), 2))))
+
+        rgb_cat_conv_split_h, rgb_cat_conv_split_w = rgb_cat_conv_relu.split([h, w], 2)
+
+        rgb_s_h = self.sigmoid_h1(self.F_h1(rgb_cat_conv_split_h))
+        rgb_s_w = self.sigmoid_w1(self.F_w1(rgb_cat_conv_split_w.permute(0, 1, 3, 2)))
+
+        # _, _, h, w = rgb.size() 
+        t_h = self.avg_pool_x2(t)
+        t_w = self.avg_pool_y2(t).permute(0, 1, 3, 2)
+
+        t_cat_conv_relu = self.act2(self.conv_1x1_2(torch.cat((t_h, t_w), 2)))
+
+        t_cat_conv_split_h, t_cat_conv_split_w = t_cat_conv_relu.split([h, w], 2)
+
+        t_s_h = self.sigmoid_h2(self.F_h2(t_cat_conv_split_h))
+        t_s_w = self.sigmoid_w2(self.F_w2(t_cat_conv_split_w.permute(0, 1, 3, 2)))
+        
+        out = rgb * (rgb_s_h * rgb_s_w + t_s_h * t_s_w) + t
+        return out
+
 class fuse_block_Mamba(nn.Module):
     def __init__(self, ch, img_size, patch_size, d_model=768, n_layer=8, d_state=16):
         super(fuse_block_Mamba, self).__init__()
