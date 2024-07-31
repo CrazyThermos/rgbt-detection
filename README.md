@@ -25,17 +25,25 @@
 python train.py --data dataset/llvip.yaml --hyp configs/hyp.scratch-low.yaml --optimizer SGD --batch-size 8 --epochs 300 --img 1280 --name rgbt --device 0
 ```
 ## 量化
-本仓库使用openppl的ppq工具对模型进行量化
-
-量化命令如下
+使用openppl的ppq工具对模型进行量化命令如下
 ```
+cd tools/
 python quantizer.py
 ```
 或者
 ```
+cd tools/
 python quantization.py
 ```
-
+使用openppl的scale文件生成tensorrt的engine文件, 在build_engine_from_onnx或者在build_engine_from_onnx_v2中设置好int8_scale_file参数
+```
+python build_engine_from_onnx.py
+python build_engine_from_onnx_v2.py
+```
+直接使用tensorrt进行量化时要设置Config类的参数，将int8_scale_file参数设置为None
+```
+python build_engine_from_onnx_v2.py
+```
 ## 文件来源
 * ~~utils/utils.py from pytorch~~
 * utils/coco/coco_eval.py from pytorch
