@@ -2,6 +2,7 @@
 *.onnx
 *.engine
 *.wts
+*.cache
 test_imgs/*
 outputs/
 runs/

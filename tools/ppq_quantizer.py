@@ -302,6 +302,11 @@ def load_calibration_rgbt_dataset( directory: str, input_shape: List[int], batch
         rgb_batches.append(torch.cat(rgb_batch, dim=0))
         t_batches.append(torch.cat(t_batch, dim=0))
 
+    if input_shape[0] == 2:
+        batches = []
+        for i in range(calibration_count):
+            batches.append(torch.cat(rgb_batch[i], t_batch[i]))
+        return list(batches)
     return list(zip(rgb_batches,t_batches))
 
 def rgbt_collate_fn(batch: torch.Tensor) -> torch.Tensor:
@@ -310,7 +315,7 @@ def rgbt_collate_fn(batch: torch.Tensor) -> torch.Tensor:
 
 
 if __name__ == "__main__":
-    BATCHSIZE   = 1
+    BATCHSIZE   = 2
     INPUT_SHAPE = [BATCHSIZE, 3, 640, 640]
     DEVICE      = 'cuda'
     QUANT_PLATFORM    = TargetPlatform.TRT_INT8
@@ -318,11 +323,11 @@ if __name__ == "__main__":
 
     EXPORT_DIRECTORY = './'
     DATASET_DIRECTORY = '/home/zhengyuhang/datasets/M3FD_yolo/images/val'
-    ONNX_PATH = './rgbt_yolov5_m3fd_op13.onnx'
+    ONNX_PATH = './rgbt_ca_rtdetrv2_589_m3fd_op18.onnx'
     CALIBRATION_COUNT = 128
     REQUIRE_ANALYSE = True
-    RGBT_MODEL = True
-    SAVE_NAME = 'rgbt_yolov5_m3fd_op13'
+    RGBT_MODEL = False
+    SAVE_NAME = 'rgbt_ca_rtdetrv2_589_m3fd_op18_int8_SYMM_LINEAR_PERCHANNEL'
     IMAGE_FORMAT='png'
     with ENABLE_CUDA_KERNEL():
         # torch model
@@ -338,12 +343,12 @@ if __name__ == "__main__":
         search_engine = SearchableGraph(graph)
         
         # operators with low quantization accuracy are not quantized
-        # for op in search_engine.opset_matching( 
-        #     sp_expr=lambda x: x.name in {'/model.24/m.0/Conv','/model.24/m.1/Conv','/model.24/m.2/Conv'},
-        #     rp_expr=lambda x, y: True,
-        #     ep_expr=None, direction='down'
-        # ):
-        #     dispatching[op.name] = TargetPlatform.FP32
+        for op in search_engine.opset_matching( 
+            sp_expr=lambda x: x.name in {'/fuse_block4/F_w2/Conv','/fuse_block4/F_h2/Conv','/neck_block/aifi/ma/MatMul_3'},
+            rp_expr=lambda x, y: True,
+            ep_expr=None, direction='down'
+        ):
+            dispatching[op.name] = TargetPlatform.FP32
 
         # initialize quantization information
         for op in graph.operations.values():
@@ -351,7 +356,11 @@ if __name__ == "__main__":
                 op_name = op.name, platform = dispatching[op.name])
 
         executor = TorchExecutor(graph=graph, device='cuda')
-        executor.tracing_operation_meta(inputs=[torch.zeros(size=INPUT_SHAPE).cuda(),torch.zeros(size=INPUT_SHAPE).cuda()])
+        if RGBT_MODEL:
+            executor.tracing_operation_meta(inputs=[torch.zeros(size=INPUT_SHAPE).cuda(),torch.zeros(size=INPUT_SHAPE).cuda()])
+        else:
+            executor.tracing_operation_meta(inputs=[torch.zeros(size=INPUT_SHAPE).cuda()])
+
         executor.load_graph(graph=graph)
 
         # Manually create a quantization optimization pipeline.
@@ -412,5 +421,5 @@ if __name__ == "__main__":
                                         platform=DEPLOY_PLATFORM, 
                                         graph=graph, 
                                         input_shape=INPUT_SHAPE,
-                                        input_names=['images'],
+                                        input_names=['input'],
                                         dynamic_shape=True)

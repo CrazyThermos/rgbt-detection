@@ -61,7 +61,7 @@ def build_engine(
     config = builder.create_builder_config()
 
     parser = trt.OnnxParser(network, TRT_LOGGER)
-    config.max_workspace_size = workspace
+    # config.max_workspace_size = workspace
 
     # builder.max_batch_size = 
 
@@ -91,16 +91,16 @@ def build_engine(
         config.set_flag(trt.BuilderFlag.INT8)
         setDynamicRange(network, int8_scale_file)
     
-    engine = builder.build_engine(network, config)
+    engine = builder.build_serialized_network(network, config)
 
     with open(engine_file, "wb") as f:
         f.write(engine.serialize())
-000
+
 
 if __name__ == "__main__":
-        build_engine(onnx_file='rgbt_yolov5_op13_quantized.onnx', 
-                 int8_scale_file='rgbt_yolov5_op13_quantized.json', 
-                 engine_file='rgbt_yolov5_op13_quantized.engine', 
-                #  dynamic_shapes={'b' : [(1,3,640,640),(1,3,640,640),(32,3,640,640)]},
+        build_engine(onnx_file='rgbt_ca_rtdetrv2_589_m3fd_op18.onnx', 
+                 int8_scale_file='rgbt_ca_rtdetrv2_589_m3fd_int8_SYMM_LINEAR_PERCHANNEL_dynamic_quantized.json', 
+                 engine_file='rgbt_ca_rtdetrv2_589_m3fd_int8_SYMM_LINEAR_PERCHANNEL.engine', 
+                #  dynamic_shapes={'b' : [(2,3,640,640),(16,3,640,640),(32,3,640,640)]},
                  int8=True)
 
