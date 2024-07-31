@@ -42,21 +42,15 @@ class RGBTCalibrator(trt.IInt8EntropyCalibrator2):
         self.width = shape[2]
         self.input_shape = shape
         self.calibration_count = calibration_count
-        # self.imgs = [os.path.join(imgpath, file) for file in os.listdir(imgpath) if file.endswith('jpg')]
-        # np.random.shuffle(self.imgs)
-        # self.imgs = self.imgs[:2000]
         self.imgs = self.load_rgbt_calibration_dataset(directory = imgpath, img_format = img_format)
 
         self.batch_idx = 0
         self.max_batch_idx = calibration_count // self.batch_size
         self.calibration_data = np.zeros((self.batch_size, 3, self.height, self.width), dtype=np.float32)
-        # self.data_size = trt.volume([self.batch_size, self.Channel, self.height, self.width]) * trt.float32.itemsize
         self.data_size = self.calibration_data.nbytes
         self.device_input = cuda.mem_alloc(self.data_size)
         self.device_input_rgb = cuda.mem_alloc(self.data_size)
         self.device_input_t = cuda.mem_alloc(self.data_size)
-
-        # self.device_input = cuda.mem_alloc(self.calibration_data.nbytes)
 
     def load_rgbt_calibration_dataset(self, directory: str, img_format: str = 'jpg'):
         path = Path(directory)
@@ -101,25 +95,6 @@ class RGBTCalibrator(trt.IInt8EntropyCalibrator2):
             batch_files = self.imgs[self.batch_idx * self.batch_size: \
                                     (self.batch_idx + 1) * self.batch_size]
 
-            # for i, f in enumerate(batch_files):
-            #     img = cv2.imread(f)  # BGR
-            #     # crop_size = [self.height, self.width]
-            #     # crop_bbox = get_crop_bbox(img, crop_size)
-            #     # crop the image
-            #     # img = crop(img, crop_bbox)
-            #     img = img.transpose((2, 0, 1))[::-1, :, :]  # BHWC to BCHW ,BGR to RGB
-            #     img = np.ascontiguousarray(img)
-            #     img = img.astype(np.float32) / 255.
-            #     assert (img.nbytes == self.data_size / self.batch_size), 'not valid img!' + f
-            #     batch_imgs[i] = img
-
-            # self.batch_idx += 1
-            # print("batch:[{}/{}]".format(self.batch_idx, self.max_batch_idx))
-            # rgb_batches, t_batches = [], [] 
-            # rgb_batch, t_batch = [], []
-            # if self.batch_size[0] == 2:
-
-            # else:
             rgb_batch_imgs = np.zeros((self.batch_size, self.Channel, self.height, self.width),
                         dtype=np.float32)
             t_batch_imgs = np.zeros((self.batch_size, self.Channel, self.height, self.width),
@@ -131,31 +106,14 @@ class RGBTCalibrator(trt.IInt8EntropyCalibrator2):
                     t_tensor = self.load_image(str(t_image)).transpose((2, 0, 1))[::-1, :, :]
                     rgb_tensor = np.ascontiguousarray(rgb_tensor).astype(np.float32) / 255.0
                     t_tensor = np.ascontiguousarray(t_tensor).astype(np.float32) / 255.0
-                    # if self.batch_size[0] == 2:
-                    #     batch_imgs[i] = rgb_tensor
-                    #     batch_imgs[i + 1] = t_tensor
-                    #     i += 2
-                    # else:
+
                     rgb_batch_imgs[i] = rgb_tensor
                     t_batch_imgs[i] = t_tensor
                     i += 1
-                # else:
-                    # rgb_batches.append(np.concatenate(rgb_batch, dim=0))
-                    # t_batches.append(np.concatenate(t_batch, dim=0))
-                    # rgb_tensor = self.load_image(str(rgb_image), input_shape=self.input_shape).transpose((2, 0, 1))[::-1, :, :]
-                    # t_tensor = self.load_image(str(t_image), input_shape=self.input_shape).transpose((2, 0, 1))[::-1, :, :]
-                    # rgb_batch = [rgb_tensor]
-                    # t_batch = [t_tensor]
-            # if len(t_batch) != 0:
-            #     rgb_batches.append(np.concatenate(rgb_batch, dim=0))
-            #     t_batches.append(np.concatenate(t_batch, dim=0))
             self.batch_idx += 1
             if self.input_shape[0] == 2:
                 batch_imgs = np.zeros((self.batch_size, self.Channel, self.height, self.width),
                             dtype=np.float32)
-                # batches = []
-                # for i in range(self.calibration_count):
-                #     batches.append(np.concatenate(rgb_batch[i], t_batch[i], axis=0))
                 batch_imgs[0] = rgb_tensor
                 batch_imgs[1] = t_tensor
                 return np.ascontiguousarray(batch_imgs)
@@ -200,74 +158,6 @@ def setDynamicRange(network, json_file: str):
                 tensor_max = abs(value)
                 tensor_min = -abs(value)
                 tensor.dynamic_range = (tensor_min, tensor_max)
-
-# def build_engine(
-#     onnx_file: str, engine_file: str,
-#     fp16: bool = True, int8: bool = False, 
-#     int8_scale_file: str = None,
-#     explicit_batch: bool = True, 
-#     dynamic_shapes: map = {},
-#     dynamic_batch_size:int = 1,
-#     workspace: int = 4294967296<<4, # 4GB
-#     ):
-#     TRT_LOGGER = trt.Logger()
-#     """
-#     Build a TensorRT Engine with given onnx model.
-
-#     Flag int8, fp16 specifies the precision of layer:
-#         For building FP32 engine: set int8 = False, fp16 = False, int8_scale_file = None
-#         For building FP16 engine: set int8 = False, fp16 = True, int8_scale_file = None
-#         For building INT8 engine: set int8 = True, fp16 = True, int8_scale_file = 'json file name'
-
-#     """
-
-#     if int8 is True:
-#         if int8_scale_file is None:
-#             raise ValueError('Build Quantized TensorRT Engine Requires a JSON file which specifies variable scales, '
-#                              'however int8_scale_file is None now.')
-
-#     builder = trt.Builder(TRT_LOGGER)
-#     if explicit_batch:
-#         network = builder.create_network(1 << (int)(trt.NetworkDefinitionCreationFlag.EXPLICIT_BATCH))
-#     else: network = builder.create_network()
-    
-#     config = builder.create_builder_config()
-
-#     parser = trt.OnnxParser(network, TRT_LOGGER)
-#     # config.max_workspace_size = workspace
-
-#     # builder.max_batch_size = 
-
-#     if len(dynamic_shapes) > 0:
-#         print(f"===> using dynamic shapes: {str(dynamic_shapes)}")
-#         builder.max_batch_size = dynamic_batch_size
-#         profile = builder.create_optimization_profile()
-
-#         for binding_name, dynamic_shape in dynamic_shapes.items():
-#             min_shape, opt_shape, max_shape = dynamic_shape
-#             profile.set_shape(
-#                 binding_name, min_shape, opt_shape, max_shape)
-
-#         config.add_optimization_profile(profile)
-#     if not os.path.exists(onnx_file):
-#         raise FileNotFoundError(f'ONNX file {onnx_file} not found')
-
-#     with open(onnx_file, 'rb') as model:
-#         if not parser.parse(model.read()):
-#             print('ERROR: Failed to parse the ONNX file.')
-#             for error in range(parser.num_errors):
-#                 print(parser.get_error(error))
-#             return None
-
-#     if fp16: config.set_flag(trt.BuilderFlag.FP16)
-#     if int8_scale_file is not None and int8:
-#         config.set_flag(trt.BuilderFlag.INT8)
-#         setDynamicRange(network, int8_scale_file)
-    
-#     engine = builder.build_serialized_network(network, config)
-
-#     with open(engine_file, "wb") as f:
-#         f.write(engine.serialize())
 
 def build_engine(onnx_file, 
                  engine_file,
@@ -366,7 +256,6 @@ def build_engine(onnx_file,
 if __name__ == "__main__":
         config = Config()
         build_engine(
-                #  dynamic_shapes={'b' : [(2,3,640,640),(16,3,640,640),(32,3,640,640)]},
                  onnx_file = 'rgbt_ca_rtdetrv2_589_m3fd_op18.onnx', 
                  engine_file = 'rgbt_ca_rtdetrv2_589_m3fd_int8_SYMM_LINEAR_PERCHANNEL.engine', 
                  workspace_size = 4294967296<<4, 
